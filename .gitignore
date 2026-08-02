@@ -1,0 +1,7 @@
+db_config.php
+error_log
+*.log
+data_log.txt
+observation_log.txt
+sensor_data_log.txt
+.well-known/

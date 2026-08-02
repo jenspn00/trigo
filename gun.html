@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Trigo - Pistol Måling (Streaming)</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a73e8">
+    <link rel="apple-touch-icon" href="icon-192-192.png">
+    <meta name="description" content="Dataindsamling med ekstern positionspistol.">
+
+    <style>
+        body, html { 
+            height: 100%; 
+            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: #111; 
+            color: white; 
+            display: grid; 
+            place-items: center; 
+        }
+        #main-content {
+            width: 100%;
+            max-width: 450px;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        #data-display-box {
+            background: #333;
+            border-radius: 10px;
+            padding: 20px;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: 1.2em;
+            line-height: 1.8;
+        }
+        #data-display-box .data-row { 
+            display: flex; 
+            justify-content: space-between; 
+            border-bottom: 1px solid #444; 
+            padding: 5px 0;
+        }
+        #data-display-box .data-row:last-child { border-bottom: none; }
+        #data-display-box strong { color: #aaa; }
+
+        #control-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            align-items: center;
+            justify-items: center;
+        }
+
+        .control-btn {
+            font-size: 2em; cursor: pointer; opacity: 0.8; user-select: none;
+            background: #444; width: 60px; height: 60px; border-radius: 10px;
+            display: grid; place-items: center;
+        }
+        .control-btn:hover { opacity: 1; background: #555; }
+
+        #log { position: fixed; bottom: 20px; width: 90%; left: 5%; text-align: center; background-color: rgba(0, 128, 0, 0.7); color: white; padding: 10px; border-radius: 5px; opacity: 0; transition: opacity 0.5s; z-index: 2; pointer-events: none; }
+        #log.error, #log.info { background-color: rgba(255, 0, 0, 0.7); }
+        #log.info { background-color: rgba(23, 162, 184, 0.8); }
+
+        #initial-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #111; z-index: 10; text-align: center; padding: 20px;}
+        #initial-screen button { font-size: 1.2em; padding: 15px 30px; cursor: pointer; border: none; background-color: #1a73e8; color: white; border-radius: 5px; }
+
+        #manual-heading-overlay, #calibration-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.85); z-index: 20; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        #manual-heading-box, #calibration-box { background-color: #333; padding: 20px; border-radius: 10px; max-width: 320px; width: 90%; }
+        #manual-heading-input { font-size: 2em; width: 100px; text-align: center; background-color: #555; color: white; border: 1px solid #777; border-radius: 5px; margin-bottom: 10px; }
+        #manual-heading-box button { margin: 5px; padding: 10px 20px; font-size: 1em; border-radius: 5px; border: none; cursor: pointer; }
+        #manual-heading-ok { background-color: #28a745; color: white; }
+        #manual-heading-cancel { background-color: #6c757d; color: white; }
+
+        /* Enkel responsivitet */
+        @media (max-width: 420px) {
+            .control-btn { width: 52px; height: 52px; font-size: 1.6em; }
+            #data-display-box { font-size: 1em; }
+        }
+    </style>
+</head>
+<body>
+    <div id="initial-screen">
+        <p>Tryk for at starte sensorer</p>
+        <button id="start-button">Start</button>
+    </div>
+
+    <div id="manual-heading-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+        <div id="manual-heading-box">
+            <h3>Indtast manuel retning (0–359°)</h3>
+            <input id="manual-heading-input" type="number" min="0" max="359" value="0" />
+            <div>
+                <button id="manual-heading-ok">OK</button>
+                <button id="manual-heading-cancel">Annuller</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="calibration-overlay" role="dialog" aria-hidden="true">
+        <div id="calibration-box">
+            <h3>Kalibrer kompas</h3>
+            <p id="calibration-status">Kalibrering ikke implementeret i demo.</p>
+            <div>
+                <button id="calibration-close">Luk</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-content" style="visibility: hidden;">
+        
+        <div id="data-display-box">
+            <div class="data-row">
+                <strong>Lat:</strong> <span id="lat-display">--</span>
+            </div>
+            <div class="data-row">
+                <strong>Lon:</strong> <span id="lon-display">--</span>
+            </div>
+            <div class="data-row">
+                <strong>Azimut:</strong> <span id="azimut-display">--</span>&deg;
+            </div>
+            <div class="data-row" id="elevation-container" style="display: none;">
+                <strong>Elevation:</strong> <span id="elevation-display">--</span>&deg;
+            </div>
+        </div>
+
+        <div id="control-panel">
+            <button id="connect-bno-btn" class="control-btn" title="Forbind til ekstern sensor" aria-label="Forbind Bluetooth">🛰️</button>
+            <button id="manual-heading-btn" class="control-btn" title="Indtast manuel retning" aria-label="Manuel retning">🧭</button>
+            <button id="calibrate-btn" class="control-btn" title="Kalibrer kompas" aria-label="Kalibrer">🔄</button>
+        </div>
+    </div>
+
+    <div id="log"></div>
+
+    <script>
+        // --- DOM ELEMENTER ---
+        const startButton = document.getElementById('start-button');
+        const initialScreen = document.getElementById('initial-screen');
+        const mainContent = document.getElementById('main-content');
+        const logDiv = document.getElementById('log');
+
+        const latDisplay = document.getElementById('lat-display'), lonDisplay = document.getElementById('lon-display');
+        const azimutDisplay = document.getElementById('azimut-display');
+        const elevationDisplay = document.getElementById('elevation-display');
+
+        const manualHeadingBtn = document.getElementById('manual-heading-btn'), manualHeadingOverlay = document.getElementById('manual-heading-overlay');
+        const manualHeadingInput = document.getElementById('manual-heading-input'), manualHeadingOk = document.getElementById('manual-heading-ok'), manualHeadingCancel = document.getElementById('manual-heading-cancel');
+        const calibrateBtn = document.getElementById('calibrate-btn'), calibrationOverlay = document.getElementById('calibration-overlay'), calibrationStatus = document.getElementById('calibration-status');
+        const calibrationClose = document.getElementById('calibration-close');
+
+        const connectBnoBtn = document.getElementById('connect-bno-btn');
+        const elevationContainer = document.getElementById('elevation-container');
+
+        // --- GLOBALE VARIABLER ---
+        let currentPosition = null;
+        let currentAzimuth = null;
+        let currentElevation = null;
+
+        let isManualHeading = false, isCalibrating = false;
+        let sensorMode = 'internal';
+
+        // --- AUTO-AFSENDELSE ---
+        let lastSendTime = 0;
+        const sendInterval = 1000; // ms
+
+        // --- BLE-konstanter (brug dem som før) ---
+        const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+        const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+        const textDecoder = new TextDecoder('utf-8');
+
+        // --- Hjælpefunktioner ---
+        function showLog(message, type = 'success', duration = 1500) {
+            logDiv.className = type;
+            logDiv.textContent = message;
+            logDiv.style.opacity = 1;
+            setTimeout(() => { logDiv.style.opacity = 0; }, duration);
+            console.log('[APP]', message);
+        }
+
+        // Vent til DOM er loaded før vi binder events (sikrer ikke-null)
+        document.addEventListener('DOMContentLoaded', () => {
+            // START-knap
+            startButton.addEventListener('click', () => {
+                initialScreen.style.display = 'none';
+                mainContent.style.visibility = 'visible';
+                initializeSensors();
+            });
+
+            // Manuel retning UI
+            manualHeadingBtn.addEventListener('click', () => {
+                manualHeadingInput.value = currentAzimuth !== null ? Math.round(currentAzimuth) : 0;
+                manualHeadingOverlay.style.display = 'flex';
+                manualHeadingOverlay.setAttribute('aria-hidden', 'false');
+                manualHeadingInput.focus();
+            });
+            manualHeadingCancel.addEventListener('click', () => {
+                manualHeadingOverlay.style.display = 'none';
+                manualHeadingOverlay.setAttribute('aria-hidden', 'true');
+                isManualHeading = false;
+                showLog('Manuel tilstand annulleret.', 'info');
+            });
+            manualHeadingOk.addEventListener('click', confirmManualHeading);
+            manualHeadingInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); confirmManualHeading(); } });
+
+            // Kalibrering UI
+            calibrateBtn.addEventListener('click', () => {
+                calibrationOverlay.style.display = 'flex';
+                calibrationOverlay.setAttribute('aria-hidden', 'false');
+            });
+            calibrationClose && calibrationClose.addEventListener('click', () => {
+                calibrationOverlay.style.display = 'none';
+                calibrationOverlay.setAttribute('aria-hidden', 'true');
+            });
+
+            // CONNECT-knap
+            connectBnoBtn.addEventListener('click', connectToPistol);
+        });
+
+        function confirmManualHeading() {
+            const val = parseInt(manualHeadingInput.value);
+            if (!isNaN(val) && val >= 0 && val < 360) {
+                isManualHeading = true;
+                sensorMode = 'manual';
+                currentAzimuth = val;
+                currentElevation = 0;
+                azimutDisplay.textContent = currentAzimuth;
+                elevationContainer.style.display = 'block';
+                elevationDisplay.textContent = 0;
+                manualHeadingOverlay.style.display = 'none';
+                manualHeadingOverlay.setAttribute('aria-hidden', 'true');
+                showLog(`Retning sat manuelt til ${currentAzimuth}°`, 'info');
+            } else {
+                alert('Indtast venligst en værdi mellem 0 og 359.');
+            }
+        }
+
+        async function initializeSensors() {
+            // GPS
+            if ('geolocation' in navigator) {
+                navigator.geolocation.watchPosition(pos => {
+                    currentPosition = pos.coords;
+                    latDisplay.textContent = currentPosition.latitude.toFixed(5);
+                    lonDisplay.textContent = currentPosition.longitude.toFixed(5);
+                }, err => { showLog(`GPS Fejl: ${err.message}`, 'error', 3000); }, { enableHighAccuracy: true });
+                showLog('GPS: aktiveret', 'success');
+            } else {
+                showLog('GPS ikke understøttet', 'error', 3000);
+            }
+
+            showLog('Klar til at forbinde til Position Gun.', 'info');
+        }
+
+        // Forsøger at forbinde til Position Gun med fallback-strategi
+        async function connectToPistol() {
+            if (!navigator.bluetooth) {
+                return alert('Web Bluetooth API er ikke understøttet i denne browser.');
+            }
+
+            // Sikre secure context
+            if (!(location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+                showLog('Web Bluetooth kræver HTTPS eller localhost. Side er ikke sikker.', 'error', 5000);
+                alert('Web Bluetooth kræver HTTPS eller localhost. Åbn siden via https:// eller localhost.');
+                return;
+            }
+
+            try {
+                showLog('Søger efter Position Gun (filter)...', 'info', 3000);
+                // Forsøg med filter (mere restriktivt)
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [SERVICE_UUID] }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                await handleDeviceConnection(device);
+            } catch (err) {
+                console.warn('Filter-forsøg fejlede eller blev afbrudt:', err);
+                // Hvis brugeren afbrød (err.name === 'NotFoundError' eller 'DOMException'), prøv fallback
+                try {
+                    showLog('Prøver acceptAllDevices fallback...', 'info', 3000);
+                    const device = await navigator.bluetooth.requestDevice({
+                        acceptAllDevices: true,
+                        optionalServices: [SERVICE_UUID]
+                    });
+                    await handleDeviceConnection(device);
+                } catch (err2) {
+                    console.error('Bluetooth-forsøg fejlede:', err2);
+                    showLog('Bluetooth-forbindelse annulleret eller fejlede.', 'error', 3000);
+                }
+            }
+        }
+
+        // Håndter faktisk forbindelse til en valgt enhed
+        async function handleDeviceConnection(device) {
+            try {
+                showLog('Forbinder til enhed...', 'info');
+                const server = await device.gatt.connect();
+                showLog('Forbundet, henter service...', 'info');
+
+                // Prøv at hente service og karakteristik (kan fejle hvis ikke tilstede)
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+                showLog('Abonnerer på data...', 'info');
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', handlePistolData);
+
+                showLog('Forbundet til Position Gun!', 'success');
+                sensorMode = 'bno055';
+                isManualHeading = false;
+                elevationContainer.style.display = 'block';
+
+                device.addEventListener('gattserverdisconnected', () => {
+                    showLog('Forbindelse til Position Gun mistet.', 'error', 3000);
+                    sensorMode = 'internal';
+                    currentAzimuth = null;
+                    currentElevation = null;
+                    azimutDisplay.textContent = "--";
+                    elevationDisplay.textContent = "--";
+                    elevationContainer.style.display = 'none';
+                });
+
+            } catch (e) {
+                console.error('Fejl under device-håndtering:', e);
+                showLog('Kunne ikke etablere GATT-forbindelse eller finde service.', 'error', 3000);
+            }
+        }
+
+        // Modtager data fra enheden (forventer JSON-streng)
+        function handlePistolData(event) {
+            try {
+                const jsonString = textDecoder.decode(event.target.value);
+                const data = JSON.parse(jsonString);
+                currentAzimuth = data.azimuth;
+                currentElevation = data.elevation;
+
+                azimutDisplay.textContent = Math.round(currentAzimuth);
+                elevationDisplay.textContent = Math.round(currentElevation);
+
+                // Auto-send (hvis GPS klar)
+                const now = Date.now();
+                if (currentPosition && (now - lastSendTime > sendInterval)) {
+                    lastSendTime = now;
+                    const record = {
+                        id: now,
+                        timestamp: new Date(now).toISOString(),
+                        position: { 
+                            latitude: currentPosition.latitude, 
+                            longitude: currentPosition.longitude, 
+                            altitude: currentPosition.altitude 
+                        },
+                        azimuth: currentAzimuth
+                    };
+                    if (sensorMode === 'bno055' && currentElevation !== null) {
+                        record.elevation = currentElevation;
+                    }
+
+                    // Send til server (fire-and-forget)
+                    fetch('save_data.php', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify(record) 
+                    })
+                    .then(resp => resp.json())
+                    .then(result => {
+                        if (result.status === 'success') showLog('Punkt auto-gemt!', 'success');
+                        else showLog(`Auto-send fejlede: ${result.message}`, 'error', 3000);
+                    })
+                    .catch(error => {
+                        showLog(`Netværksfejl: ${error.message}`, 'error', 3000);
+                    });
+                }
+            } catch (err) {
+                console.error('Kunne ikke parse pistol-data:', err, event);
+            }
+        }
+
+        // Tom førunload - plads til senere cleanup hvis nødvendigt
+        window.addEventListener('beforeunload', () => {});
+    </script>
+</body>
+</html>

@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trigo - Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg-primary: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #1c2128;
+            --accent: #58a6ff;
+            --accent-dim: rgba(88,166,255,0.15);
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --orange: #f0883e;
+            --purple: #bc8cff;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #484f58;
+            --border: #30363d;
+            --font-mono: "SF Mono", "Fira Code", monospace;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        body, html {
+            height: 100%; width: 100%; overflow: hidden;
+            font-family: var(--font-sans);
+            background: var(--bg-primary); color: var(--text-primary);
+        }
+
+        #app { display: grid; grid-template-columns: 1fr 340px; width: 100%; height: 100%; }
+
+        /* ===== MAP ===== */
+        #map { height: 100%; background: var(--bg-primary); }
+        .leaflet-container { background: #0d1117; }
+        .leaflet-control-zoom a { background: var(--bg-card) !important; color: var(--text-primary) !important; border-color: var(--border) !important; }
+        .leaflet-control-zoom a:hover { background: var(--bg-hover) !important; }
+
+        .leaflet-popup-content-wrapper {
+            background: var(--bg-card); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 10px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+        }
+        .leaflet-popup-tip { background: var(--bg-card); border-color: var(--border); }
+        .leaflet-popup-close-button { color: var(--text-secondary) !important; }
+        .leaflet-popup-close-button:hover { color: var(--text-primary) !important; }
+
+        .popup-title { font-weight: 700; font-size: 0.95em; margin-bottom: 6px; display: block; }
+        .popup-title.target   { color: var(--danger); }
+        .popup-title.observer { color: var(--orange); }
+        .popup-address { font-size: 0.9em; color: var(--text-secondary); margin-bottom: 4px; display: block; line-height: 1.3; }
+        .popup-detail  { font-size: 0.82em; font-family: var(--font-mono); color: var(--text-muted); display: block; margin-top: 2px; }
+        .popup-detail .val { color: var(--text-primary); }
+
+        /* ===== SIDEBAR ===== */
+        #sidebar { background: var(--bg-card); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+        #sidebar-header {
+            padding: 16px 18px; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        #sidebar-header h1 { font-size: 1.15em; font-weight: 700; letter-spacing: -0.3px; display: flex; align-items: center; gap: 8px; }
+        .logo-sm {
+            width: 28px; height: 28px; border-radius: 7px;
+            background: linear-gradient(135deg, var(--accent), #1f6feb);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px; color: #fff;
+        }
+        #connection-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); animation: pulse 2s infinite; }
+        #connection-dot.stale { background: var(--warning); box-shadow: 0 0 6px var(--warning); animation: none; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        #stats-bar {
+            display: grid; grid-template-columns: 1fr 1fr 1fr;
+            padding: 12px 18px; gap: 8px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-primary);
+        }
+        .stat-item { text-align: center; }
+        .stat-val { font-family: var(--font-mono); font-size: 1.3em; font-weight: 700; color: var(--text-primary); display: block; }
+        .stat-label { font-size: 0.7em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-val.accent  { color: var(--accent); }
+        .stat-val.danger  { color: var(--danger); }
+        .stat-val.success { color: var(--success); }
+
+        #config-section {
+            padding: 10px 18px; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; gap: 10px; font-size: 0.8em;
+        }
+        #config-section label { color: var(--text-secondary); white-space: nowrap; }
+        #time-window {
+            background: var(--bg-primary); color: var(--text-primary);
+            border: 1px solid var(--border); border-radius: 4px;
+            padding: 3px 6px; font-family: var(--font-mono); font-size: 0.95em;
+            width: 60px; text-align: center; outline: none;
+        }
+        .config-hint { color: var(--text-muted); font-size: 0.9em; }
+
+        #tab-bar { display: flex; border-bottom: 1px solid var(--border); }
+        .tab-btn {
+            flex: 1; padding: 10px; border: none; background: none;
+            color: var(--text-muted); font-size: 0.82em; cursor: pointer;
+            border-bottom: 2px solid transparent; transition: all 0.15s;
+            font-weight: 600;
+        }
+        .tab-btn:hover { color: var(--text-secondary); }
+        .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        #list-container { flex-grow: 1; overflow-y: auto; }
+        .list-section { display: none; }
+        .list-section.active { display: block; }
+
+        .obs-item, .target-item {
+            padding: 12px 18px;
+            border-bottom: 1px solid rgba(48,54,61,0.4);
+            animation: fadeIn 0.3s ease-out;
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .obs-item:hover, .target-item:hover { background: var(--bg-hover); }
+        .target-item { border-left: 3px solid var(--danger); }
+
+        .obs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .obs-time { font-size: 0.75em; color: var(--text-muted); }
+        .obs-user-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+        .obs-id { font-size: 0.75em; color: var(--text-muted); font-family: var(--font-mono); }
+        .obs-body { display: flex; justify-content: space-between; align-items: baseline; }
+        .obs-coords  { font-family: var(--font-mono); font-size: 0.82em; color: var(--text-secondary); }
+        .obs-bearing { font-family: var(--font-mono); font-size: 1em; font-weight: 700; color: var(--accent); }
+
+        .target-coords  { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-primary); font-weight: 600; }
+        .target-address { font-size: 0.82em; color: var(--text-secondary); margin-top: 3px; line-height: 1.3; }
+        .target-meta    { font-size: 0.72em; color: var(--text-muted); margin-top: 4px; font-family: var(--font-mono); }
+        .target-quality { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 600; }
+        .quality-good   { background: rgba(63,185,80,0.15);  color: var(--success); }
+        .quality-medium { background: rgba(210,153,34,0.15); color: var(--warning); }
+        .quality-poor   { background: rgba(248,81,73,0.15);  color: var(--danger); }
+
+        /* ===== TRACK-KORT (v4) ===== */
+        #track-card {
+            display: none;
+            margin: 0 14px 12px 14px;
+            background: linear-gradient(135deg, rgba(188,140,255,0.08), rgba(188,140,255,0.02));
+            border: 1px solid rgba(188,140,255,0.35);
+            border-radius: 10px; padding: 12px 14px;
+        }
+        #track-card .tc-title {
+            font-size: 0.75em; font-weight: 700; letter-spacing: 0.08em;
+            text-transform: uppercase; color: var(--purple); margin-bottom: 8px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        #track-card .tc-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+        }
+        #track-card .tc-item .tc-val {
+            display: block; font-family: var(--font-mono); font-size: 1.15em;
+            font-weight: 700; color: var(--text-primary);
+        }
+        #track-card .tc-item .tc-label {
+            display: block; font-size: 0.7em; color: var(--text-secondary);
+        }
+        #track-card .tc-meta {
+            margin-top: 8px; font-size: 0.72em; font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+        .fix-arrow-icon {
+            color: var(--purple);
+            font-size: 22px; line-height: 22px;
+            text-shadow: 0 0 6px rgba(0,0,0,0.8);
+        }
+
+        .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 0.9em; }
+        .empty-state .icon { font-size: 2em; margin-bottom: 10px; opacity: 0.5; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+        .map-legend {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 14px;
+            font-size: 0.78em; line-height: 1.8; color: var(--text-secondary);
+        }
+        .map-legend .legend-title { font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+        .legend-row { display: flex; align-items: center; gap: 8px; }
+        .legend-line { width: 20px; height: 0; display: inline-block; vertical-align: middle; }
+        .legend-dot  { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+        @media (max-width: 768px) {
+            #app { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+            #sidebar { border-left: none; border-top: 1px solid var(--border); }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="map"></div>
+        <div id="sidebar">
+            <div id="sidebar-header">
+                <h1><span class="logo-sm">&#x25B3;</span> Trigo Dashboard</h1>
+                <div id="connection-dot" title="Live-forbindelse"></div>
+            </div>
+
+            <div id="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-val accent"  id="stat-obs">0</span>
+                    <span class="stat-label">Observationer</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-val danger"  id="stat-targets">0</span>
+                    <span class="stat-label">Krydsninger</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-val success" id="stat-users">0</span>
+                    <span class="stat-label">Brugere</span>
+                </div>
+            </div>
+
+            <div id="track-card">
+                <div class="tc-title">&#x1F6F8; Estimeret track</div>
+                <div class="tc-grid">
+                    <div class="tc-item"><span class="tc-val" id="tc-speed">-</span><span class="tc-label">Fart</span></div>
+                    <div class="tc-item"><span class="tc-val" id="tc-course">-</span><span class="tc-label">Kurs</span></div>
+                    <div class="tc-item"><span class="tc-val" id="tc-height">-</span><span class="tc-label">Højde</span></div>
+                    <div class="tc-item"><span class="tc-val" id="tc-climb">-</span><span class="tc-label">Stigning</span></div>
+                </div>
+                <div class="tc-meta" id="tc-meta">-</div>
+            </div>
+
+            <div id="config-section">
+                <label>Tidsvindue:</label>
+                <input type="number" id="time-window" value="120" min="10" max="3600" step="10">
+                <span class="config-hint">sek</span>
+            </div>
+
+            <div id="tab-bar">
+                <button class="tab-btn active" data-tab="targets">Krydsninger</button>
+                <button class="tab-btn" data-tab="observations">Observationer</button>
+            </div>
+
+            <div id="list-container">
+                <div id="targets-list" class="list-section active">
+                    <div class="empty-state" id="targets-empty">
+                        <div class="icon">&#x1F3AF;</div>
+                        Ingen krydsninger endnu.<br>Der kræves mindst 2 observationer fra <em>forskellige</em> sessioner.
+                    </div>
+                </div>
+                <div id="observations-list" class="list-section">
+                    <div class="empty-state" id="obs-empty">
+                        <div class="icon">&#x1F4E1;</div>
+                        Venter på observationer...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        //  TRIGO DASHBOARD — v4
+        //
+        //  NYT i v4:
+        //    • LSQ-fusion: alle pejlinger samles i 5-sek tidsbins og
+        //      hvert bin giver ét vægtet least-squares fix (med
+        //      iterativ outlier-frasortering) i stedet for en sky af
+        //      parvise krydsninger.
+        //    • Konstant-hastigheds-fit over fixene → fart, kurs og
+        //      stigning vises i sidebar + fremskrivnings-pil på kortet.
+        //    • Parvise krydsninger findes stadig som "rå" lag.
+        //
+        //  Ændringer fra v3 (bevaret):
+        //
+        //  Ændringer ift. v2:
+        //    • Bruger nu session_id direkte fra databasen (i stedet
+        //      for at gætte ud fra ID/manglende felter — det gjorde
+        //      tidligere at alle blev "unknown" og ingen krydsninger
+        //      blev fundet).
+        //    • Adresse hentes fortrinsvist fra databasen (gemt af
+        //      save_data.php) — fallback til Nominatim kun for nye
+        //      krydsninger uden cache.
+        //    • Højde-estimat når 2+ observationer skærer hinanden,
+        //      vha. elevation_angle og horisontal afstand.
+        //    • Forbindelses-indikator viser "stale" hvis data er
+        //      ældre end 2× polling-intervallet.
+        // ============================================================
+
+        const USER_COLORS = ['#58a6ff','#f0883e','#bc8cff','#3fb950','#f85149','#d29922','#79c0ff','#ff7b72'];
+        const FETCH_INTERVAL = 3000;
+        const DEFAULT_TIME_WINDOW = 120;
+
+        const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([55.47, 8.45], 13);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CARTO',
+            maxZoom: 20
+        }).addTo(map);
+
+        const linesLayer    = L.layerGroup().addTo(map);
+        const observerLayer = L.layerGroup().addTo(map);
+        const targetLayer   = L.layerGroup().addTo(map);
+        const trackLayer    = L.layerGroup();              // gml. metode — tilvalg via lag-menu
+        const estLayer      = L.layerGroup().addTo(map);   // v4: LSQ-fixes + track-vektor
+
+        const legend = L.control({ position: 'bottomleft' });
+        legend.onAdd = function() {
+            const div = L.DomUtil.create('div', 'map-legend');
+            div.innerHTML = `
+                <div class="legend-title">Forklaring</div>
+                <div class="legend-row"><span class="legend-dot" style="background:var(--orange);border:2px solid var(--bg-primary)"></span> Observatør</div>
+                <div class="legend-row"><span class="legend-line" style="border-top:2px dashed var(--orange)"></span> Stedlinje</div>
+                <div class="legend-row"><span class="legend-dot" style="background:var(--danger)"></span> Krydsning (rå)</div>
+                <div class="legend-row"><span class="legend-dot" style="background:var(--purple)"></span> Estimeret position (fix)</div>
+                <div class="legend-row"><span class="legend-line" style="border-top:2.5px solid var(--purple)"></span> Estimeret track</div>
+            `;
+            return div;
+        };
+        legend.addTo(map);
+
+        L.control.layers(null, {
+            "Stedlinjer":          linesLayer,
+            "Observatører":        observerLayer,
+            "Krydsninger (rå)":    targetLayer,
+            "Estimeret track":     estLayer,
+            "Track (gml. metode)": trackLayer
+        }, { position: 'topright', collapsed: true }).addTo(map);
+
+        // --- STATE ---
+        let lastDataHash = "";
+        let userColorMap = {};
+        let userColorIndex = 0;
+        let lastSuccessfulFetch = 0;
+        const connectionDot = document.getElementById('connection-dot');
+
+        // --- TABS ---
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.list-section').forEach(s => s.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab + '-list').classList.add('active');
+            });
+        });
+
+        // --- MATEMATIK ---
+
+        // Cosinus-korrigeret skæringspunkt + indeholder afstand fra obs1 til skæringen.
+        function findIntersection(p1, brng1, p2, brng2) {
+            const toRad = d => d * Math.PI / 180;
+            const lat1 = p1.lat, lon1 = p1.lon;
+            const lat2 = p2.lat, lon2 = p2.lon;
+
+            const midLat = (lat1 + lat2) / 2;
+            const cosLat = Math.cos(toRad(midLat));
+
+            // Lokale kartesiske enheder ≈ grader i lat-retningen.
+            const x1 = 0, y1 = 0;
+            const x2 = (lon2 - lon1) * cosLat;
+            const y2 = (lat2 - lat1);
+
+            const dx1 = Math.sin(toRad(brng1)), dy1 = Math.cos(toRad(brng1));
+            const dx2 = Math.sin(toRad(brng2)), dy2 = Math.cos(toRad(brng2));
+
+            const det = dy2 * dx1 - dx2 * dy1;
+            if (Math.abs(det) < 1e-8) return null;
+
+            const t = (dy2 * (x2 - x1) - dx2 * (y2 - y1)) / det;
+            const u = (dy1 * (x2 - x1) - dx1 * (y2 - y1)) / det;
+            if (t < 0 || u < 0) return null;
+
+            const xi = x1 + t * dx1;
+            const yi = y1 + t * dy1;
+            const intLat = lat1 + yi;
+            const intLon = lon1 + xi / cosLat;
+
+            const angle = Math.abs(Math.atan2(
+                dx1 * dy2 - dy1 * dx2,
+                dx1 * dx2 + dy1 * dy2
+            ) * 180 / Math.PI);
+
+            // Afstand i meter fra hver observatør til skæringen
+            // (1° lat ≈ 111000 m)
+            const dist1 = Math.hypot(t * dx1, t * dy1) * 111000;
+            const dist2 = Math.hypot(u * dx2, u * dy2) * 111000;
+
+            return { lat: intLat, lon: intLon, angle, dist1, dist2 };
+        }
+
+        function getEndPoint(lat, lon, bearing, dist = 50000) {
+            const R = 6371e3;
+            const brng = bearing * Math.PI / 180;
+            const lat1 = lat * Math.PI / 180;
+            const lon1 = lon * Math.PI / 180;
+            const lat2 = Math.asin(Math.sin(lat1)*Math.cos(dist/R) + Math.cos(lat1)*Math.sin(dist/R)*Math.cos(brng));
+            const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(dist/R)*Math.cos(lat1),
+                                           Math.cos(dist/R) - Math.sin(lat1)*Math.sin(lat2));
+            return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
+        }
+
+        function getQuality(angle) {
+            const a = Math.min(angle, 180 - angle); // 0–90
+            if (a >= 30) return { label: 'God',     cls: 'quality-good' };
+            if (a >= 10) return { label: 'OK',      cls: 'quality-medium' };
+            return                 { label: 'Usikker', cls: 'quality-poor' };
+        }
+
+        // ============================================================
+        //  v4: LEAST-SQUARES FUSION + TRACK-ESTIMERING
+        //
+        //  Idé: i stedet for at behandle hver parvis krydsning som et
+        //  "mål", samles ALLE pejlinger i tidsbins (5 sek). For hvert
+        //  bin med pejlinger fra ≥2 forskellige sessioner beregnes ét
+        //  vægtet least-squares fix: det punkt der minimerer summen af
+        //  kvadrerede vinkelrette afstande til alle pejlelinjer.
+        //  Outliers (kompas-spikes) smides ud iterativt.
+        //
+        //  Derefter fittes en konstant-hastigheds-model over fixene
+        //  → fart, kurs og stigning/fald. Det er dét der gør en sky af
+        //  usikre pejlinger til et brugbart track.
+        // ============================================================
+
+        const BIN_SEC = 5;               // tidsbin-bredde
+        const M_PER_DEG_LAT = 111320;
+
+        // Lokalt ENU-koordinatsystem (meter) omkring reference-punkt
+        function toENU(lat, lon, lat0, lon0, cosLat0) {
+            return {
+                x: (lon - lon0) * cosLat0 * M_PER_DEG_LAT,
+                y: (lat - lat0) * M_PER_DEG_LAT
+            };
+        }
+        function fromENU(x, y, lat0, lon0, cosLat0) {
+            return {
+                lat: lat0 + y / M_PER_DEG_LAT,
+                lon: lon0 + x / (cosLat0 * M_PER_DEG_LAT)
+            };
+        }
+        function median(arr) {
+            if (!arr.length) return null;
+            const s = [...arr].sort((a, b) => a - b);
+            const m = Math.floor(s.length / 2);
+            return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        }
+
+        // Vægtet LSQ-fix for et sæt pejlinger (samme tidsbin).
+        // Returnerer null hvis geometrien er for dårlig.
+        function lsqFix(bearings) {
+            const lat0 = bearings.reduce((s, b) => s + b.lat, 0) / bearings.length;
+            const lon0 = bearings.reduce((s, b) => s + b.lon, 0) / bearings.length;
+            const cosLat0 = Math.cos(lat0 * Math.PI / 180);
+
+            // Forbered: position (m), retningsvektor d, normalvektor n
+            let items = bearings.map(b => {
+                const p = toENU(b.lat, b.lon, lat0, lon0, cosLat0);
+                const th = b.azi * Math.PI / 180;
+                return {
+                    b, p,
+                    d: { x: Math.sin(th), y: Math.cos(th) },   // pejleretning
+                    n: { x: Math.cos(th), y: -Math.sin(th) }   // vinkelret
+                };
+            });
+
+            for (const it of items) it.w = 1;
+
+            let fix = null, used = items;
+            for (let iter = 0; iter < 3; iter++) {
+                // Normal-ligninger for min Σ w·(nᵀ(x−p))²
+                let a00 = 0, a01 = 0, a11 = 0, b0 = 0, b1 = 0;
+                for (const it of used) {
+                    const { n, p, w } = it;
+                    const np = n.x * p.x + n.y * p.y;
+                    a00 += w * n.x * n.x; a01 += w * n.x * n.y; a11 += w * n.y * n.y;
+                    b0  += w * n.x * np;  b1  += w * n.y * np;
+                }
+                const det = a00 * a11 - a01 * a01;
+                if (Math.abs(det) < 1e-6) return null;      // (næsten) parallelle linjer
+                const x = ( a11 * b0 - a01 * b1) / det;
+                const y = (-a01 * b0 + a00 * b1) / det;
+
+                // Residualer + fremad-tjek
+                for (const it of used) {
+                    const dx = x - it.p.x, dy = y - it.p.y;
+                    it.r = Math.abs(it.n.x * dx + it.n.y * dy);   // vinkelret afstand (m)
+                    it.s = it.d.x * dx + it.d.y * dy;             // afstand langs pejlingen (m)
+                }
+                const medR = median(used.map(it => it.r)) ?? 0;
+                const thresh = Math.max(150, 3 * medR);
+                const kept = used.filter(it => it.s > 0 && it.r <= thresh);
+
+                const keptSessions = new Set(kept.map(it => it.b.userId));
+                if (kept.length < 2 || keptSessions.size < 2) return null;
+
+                fix = { x, y };
+
+                // IRLS-vægtning: den vinkelrette fejl vokser proportionalt
+                // med afstanden (σ_perp ≈ dist · σ_vinkel), så pejlinger
+                // fra nære observatører skal veje tungere: w ∝ 1/dist².
+                // Normaliseres til middelværdi 1 så det-tærsklen holder.
+                let changed = kept.length !== used.length;
+                const raw = kept.map(it => 1 / Math.pow(Math.max(it.s, 500), 2));
+                const meanW = raw.reduce((s, w) => s + w, 0) / raw.length;
+                kept.forEach((it, k) => {
+                    const nw = raw[k] / meanW;
+                    if (Math.abs(nw - it.w) / Math.max(nw, 1e-9) > 0.05) changed = true;
+                    it.w = nw;
+                });
+                used = kept;
+                if (!changed) break;
+            }
+            if (!fix) return null;
+
+            // Geometrisk kvalitet: spredning i pejleretninger (mod 180°)
+            const angles = used.map(it => ((it.b.azi % 180) + 180) % 180);
+            let spread = 0;
+            for (let i = 0; i < angles.length; i++)
+                for (let j = i + 1; j < angles.length; j++) {
+                    let d = Math.abs(angles[i] - angles[j]);
+                    if (d > 90) d = 180 - d;
+                    spread = Math.max(spread, d);
+                }
+            if (spread < 4) return null;                     // for spids geometri
+
+            // Sanity: fix maks. 100 km fra nærmeste observatør
+            const minDist = Math.min(...used.map(it => Math.hypot(fix.x - it.p.x, fix.y - it.p.y)));
+            if (minDist > 100000) return null;
+
+            const rms = Math.sqrt(used.reduce((s, it) => s + it.r * it.r, 0) / used.length);
+
+            // Højde: median af obsAlt + s·tan(elev)
+            const hs = [];
+            for (const it of used) {
+                const e = it.b.elev;
+                if (!isNaN(e) && Math.abs(e) < 89) {
+                    const h = (it.b.obsAlt || 0) + it.s * Math.tan(e * Math.PI / 180);
+                    if (h > -200 && h < 30000) hs.push(h);
+                }
+            }
+            let height = median(hs);
+            if (height !== null && hs.length >= 2) {
+                const mad = median(hs.map(h => Math.abs(h - height)));
+                if (mad > Math.max(75, 0.5 * Math.abs(height))) height = null;
+            }
+
+            const ll = fromENU(fix.x, fix.y, lat0, lon0, cosLat0);
+            return {
+                lat: ll.lat, lon: ll.lon,
+                rms, spread, height,
+                nBearings: used.length,
+                nSessions: new Set(used.map(it => it.b.userId)).size,
+                meanDist: used.reduce((s, it) => s + it.s, 0) / used.length
+            };
+        }
+
+        // Del pejlinger op i tidsbins og beregn ét fix pr. bin
+        function computeFixes(points) {
+            const bins = new Map();
+            for (const p of points) {
+                if (isNaN(p.time)) continue;
+                const key = Math.floor(p.time / (BIN_SEC * 1000));
+                if (!bins.has(key)) bins.set(key, []);
+                bins.get(key).push(p);
+            }
+            const fixes = [];
+            for (const [key, arr] of [...bins.entries()].sort((a, b) => a[0] - b[0])) {
+                if (new Set(arr.map(p => p.userId)).size < 2) continue;
+                const f = lsqFix(arr);
+                if (f) fixes.push({ ...f, time: (key + 0.5) * BIN_SEC * 1000 });
+            }
+            return fixes;
+        }
+
+        // Konstant-hastigheds-fit over fixes → fart, kurs, stigning
+        function fitTrack(fixes) {
+            if (fixes.length < 3) return null;
+            const t0 = fixes[0].time;
+            const span = (fixes[fixes.length - 1].time - t0) / 1000;
+            if (span < 8) return null;
+
+            const lat0 = fixes[0].lat, lon0 = fixes[0].lon;
+            const cosLat0 = Math.cos(lat0 * Math.PI / 180);
+            const pts = fixes.map(f => {
+                const e = toENU(f.lat, f.lon, lat0, lon0, cosLat0);
+                return { t: (f.time - t0) / 1000, x: e.x, y: e.y, w: Math.min(f.nBearings, 10), h: f.height };
+            });
+
+            const W  = pts.reduce((s, p) => s + p.w, 0);
+            const tM = pts.reduce((s, p) => s + p.w * p.t, 0) / W;
+            const xM = pts.reduce((s, p) => s + p.w * p.x, 0) / W;
+            const yM = pts.reduce((s, p) => s + p.w * p.y, 0) / W;
+            const Stt = pts.reduce((s, p) => s + p.w * (p.t - tM) ** 2, 0);
+            if (Stt < 1e-6) return null;
+
+            const vx = pts.reduce((s, p) => s + p.w * (p.t - tM) * (p.x - xM), 0) / Stt;
+            const vy = pts.reduce((s, p) => s + p.w * (p.t - tM) * (p.y - yM), 0) / Stt;
+
+            // Fit-residualer (hvor "lineært" bevæger objektet sig?)
+            const res = pts.map(p => Math.hypot(
+                p.x - (xM + vx * (p.t - tM)),
+                p.y - (yM + vy * (p.t - tM))
+            ));
+            const rmsFit = Math.sqrt(res.reduce((s, r) => s + r * r, 0) / res.length);
+
+            // Stigning (m/s) fra fixes med højde
+            let climb = null;
+            const hp = pts.filter(p => p.h !== null && p.h !== undefined);
+            if (hp.length >= 3) {
+                const Wh  = hp.reduce((s, p) => s + p.w, 0);
+                const tMh = hp.reduce((s, p) => s + p.w * p.t, 0) / Wh;
+                const hMh = hp.reduce((s, p) => s + p.w * p.h, 0) / Wh;
+                const Sth = hp.reduce((s, p) => s + p.w * (p.t - tMh) ** 2, 0);
+                if (Sth > 1e-6) climb = hp.reduce((s, p) => s + p.w * (p.t - tMh) * (p.h - hMh), 0) / Sth;
+            }
+
+            const speed  = Math.hypot(vx, vy);                                   // m/s
+            const course = (Math.atan2(vx, vy) * 180 / Math.PI + 360) % 360;     // ° fra nord
+
+            // Seneste position iflg. modellen (til fremskrivnings-vektor)
+            const tLast = pts[pts.length - 1].t;
+            const lastXY = { x: xM + vx * (tLast - tM), y: yM + vy * (tLast - tM) };
+            const lastLL = fromENU(lastXY.x, lastXY.y, lat0, lon0, cosLat0);
+            const projLL = fromENU(lastXY.x + vx * 60, lastXY.y + vy * 60, lat0, lon0, cosLat0);
+
+            return { speed, course, climb, rmsFit, nFixes: fixes.length, span, lastLL, projLL };
+        }
+
+        function courseToCardinal(c) {
+            const dirs = ['N','NNØ','NØ','ØNØ','Ø','ØSØ','SØ','SSØ','S','SSV','SV','VSV','V','VNV','NV','NNV'];
+            return dirs[Math.round(c / 22.5) % 16];
+        }
+
+        function getUserColor(userId) {
+            if (!userId) userId = 'unknown';
+            if (!userColorMap[userId]) {
+                userColorMap[userId] = USER_COLORS[userColorIndex % USER_COLORS.length];
+                userColorIndex++;
+            }
+            return userColorMap[userId];
+        }
+
+        // --- DATA-HENTNING ---
+        async function updateDashboard() {
+            try {
+                const response = await fetch('fetch_log.php');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+
+                lastSuccessfulFetch = Date.now();
+                connectionDot.classList.remove('stale');
+
+                const currentHash = JSON.stringify(data);
+                if (currentHash === lastDataHash) return;
+                lastDataHash = currentHash;
+
+                const obs = data.latest_observations || [];
+                const timeWindow = parseInt(document.getElementById('time-window').value) || DEFAULT_TIME_WINDOW;
+                processData(obs, timeWindow);
+            } catch (e) {
+                console.error("Fejl ved hentning:", e);
+            }
+        }
+
+        // Mark connection stale after 2× interval
+        setInterval(() => {
+            if (Date.now() - lastSuccessfulFetch > FETCH_INTERVAL * 2.5) {
+                connectionDot.classList.add('stale');
+            }
+        }, FETCH_INTERVAL);
+
+        function processData(observations, timeWindowSec) {
+            linesLayer.clearLayers();
+            observerLayer.clearLayers();
+            targetLayer.clearLayers();
+            trackLayer.clearLayers();
+
+            const points = [];
+            const uniqueUsers = new Set();
+
+            // 1. Parse observationer
+            observations.forEach(o => {
+                const lat  = parseFloat(o.latitude);
+                const lon  = parseFloat(o.longitude);
+                const azi  = parseFloat(o.azimuth);
+                const time = new Date(o.observed_at).getTime();
+                // VIGTIGT: brug session_id som primær identifikator.
+                // Fald tilbage til row-id kun hvis session_id er NULL —
+                // det gør hver gammel række til "sin egen bruger" i
+                // stedet for at samle dem alle som "unknown".
+                const userId = o.session_id || ('row-' + (o.id || Math.random().toString(36).slice(2)));
+                const elev   = parseFloat(o.elevation_angle ?? o.elevation ?? 0);
+                const obsAlt = parseFloat(o.altitude ?? 0);
+                const color  = getUserColor(userId);
+                const address = o.address || null;
+
+                uniqueUsers.add(userId);
+                points.push({ lat, lon, azi, time, userId, elev, obsAlt, color, id: o.id, address });
+
+                // Stedlinje
+                const end = getEndPoint(lat, lon, azi);
+                L.polyline([[lat, lon], end], {
+                    color, weight: 1.5, dashArray: '6,4', opacity: 0.4
+                }).addTo(linesLayer);
+
+                // Observatør-markør
+                L.circleMarker([lat, lon], {
+                    radius: 5, color, fillColor: color, fillOpacity: 0.8, weight: 2
+                }).bindPopup(`
+                    <span class="popup-title observer">Observatør</span>
+                    <span class="popup-detail">Session: <span class="val">${userId}</span></span>
+                    <span class="popup-detail">Retning: <span class="val">${Math.round(azi)}°</span></span>
+                    <span class="popup-detail">Elevation: <span class="val">${Math.round(elev)}°</span></span>
+                    <span class="popup-detail">Tid: <span class="val">${new Date(time).toLocaleTimeString('da-DK')}</span></span>
+                `).addTo(observerLayer);
+            });
+
+            // 2. Find krydsninger
+            const targets = [];
+            for (let i = 0; i < points.length; i++) {
+                for (let j = i + 1; j < points.length; j++) {
+                    const p1 = points[i], p2 = points[j];
+                    if (Math.abs(p1.time - p2.time) > timeWindowSec * 1000) continue;
+                    if (p1.userId === p2.userId) continue;
+
+                    const ix = findIntersection(
+                        { lat: p1.lat, lon: p1.lon }, p1.azi,
+                        { lat: p2.lat, lon: p2.lon }, p2.azi
+                    );
+                    if (!ix) continue;
+
+                    // Rimelighedstjek: krydsning ikke mere end 100 km væk
+                    const dist = Math.sqrt(
+                        Math.pow((ix.lat - p1.lat) * 111000, 2) +
+                        Math.pow((ix.lon - p1.lon) * 111000 * Math.cos(p1.lat * Math.PI/180), 2)
+                    );
+                    if (dist > 100000) continue;
+
+                    // Højde-estimat fra elevation_angle.
+                    // h_i = obsAlt_i + dist_i * tan(elev_i)
+                    let height = null;
+                    if (!isNaN(p1.elev) && !isNaN(p2.elev) && Math.abs(p1.elev) < 89 && Math.abs(p2.elev) < 89) {
+                        const h1 = p1.obsAlt + ix.dist1 * Math.tan(p1.elev * Math.PI / 180);
+                        const h2 = p2.obsAlt + ix.dist2 * Math.tan(p2.elev * Math.PI / 180);
+                        height = (h1 + h2) / 2;
+                        // Hvis de to estimater divergerer voldsomt, er det
+                        // sandsynligvis støj — skjul tallet.
+                        if (Math.abs(h1 - h2) > Math.max(50, 0.3 * Math.max(Math.abs(h1), Math.abs(h2)))) {
+                            height = null;
+                        }
+                    }
+
+                    targets.push({
+                        lat: ix.lat, lon: ix.lon,
+                        angle: ix.angle,
+                        quality: getQuality(ix.angle),
+                        time: (p1.time + p2.time) / 2,
+                        height,
+                        obs: [p1, p2]
+                    });
+                }
+            }
+
+            // 3. Tegn krydsninger
+            const addrQueue = [];
+            targets.forEach((t, idx) => {
+                const addrId = `target-addr-${idx}`;
+                const uncertainty = Math.max(20, 500 / Math.max(1, Math.min(t.angle, 180 - t.angle)));
+
+                L.circle([t.lat, t.lon], {
+                    radius: uncertainty,
+                    color: '#f85149', fillColor: '#f85149',
+                    fillOpacity: 0.08, weight: 1, opacity: 0.3
+                }).addTo(targetLayer);
+
+                const heightHtml = t.height != null
+                    ? `<span class="popup-detail">Højde: <span class="val">${Math.round(t.height)} m</span></span>`
+                    : '';
+
+                // Brug allerede-cachet adresse fra DB hvis muligt
+                const cachedAddr = t.obs[0].address || t.obs[1].address;
+                const initialAddr = cachedAddr ? `<i>(nærmeste observatør:</i> ${cachedAddr})` : 'Henter adresse...';
+
+                L.circleMarker([t.lat, t.lon], {
+                    radius: 8, color: '#f85149', fillColor: '#f85149',
+                    fillOpacity: 0.9, weight: 2
+                }).bindPopup(`
+                    <span class="popup-title target">Krydsning #${idx + 1}</span>
+                    <span id="${addrId}" class="popup-address">${initialAddr}</span>
+                    <span class="popup-detail">Koordinater: <span class="val">${t.lat.toFixed(5)}, ${t.lon.toFixed(5)}</span></span>
+                    <span class="popup-detail">Vinkel: <span class="val">${Math.round(t.angle)}°</span> — <span class="${t.quality.cls}">${t.quality.label}</span></span>
+                    ${heightHtml}
+                    <span class="popup-detail">Tid: <span class="val">${new Date(t.time).toLocaleTimeString('da-DK')}</span></span>
+                `).addTo(targetLayer);
+
+                if (!cachedAddr) addrQueue.push({ lat: t.lat, lon: t.lon, id: addrId });
+            });
+
+            // 4a. (Gammel metode, nu skjult som ekstra lag): forbind krydsninger
+            if (targets.length > 1) {
+                const sorted = [...targets]
+                    .filter(t => t.quality.cls !== 'quality-poor')
+                    .sort((a, b) => a.time - b.time);
+                if (sorted.length > 1) {
+                    const trackCoords = sorted.map(t => [t.lat, t.lon]);
+                    L.polyline(trackCoords, { color: '#f85149', weight: 2, opacity: 0.35, dashArray: '4,6' }).addTo(trackLayer);
+                }
+            }
+
+            // 4b. v4: LSQ-fixes pr. tidsbin + konstant-hastigheds-track
+            const fixes = computeFixes(points);
+            const track = fitTrack(fixes);
+            renderEstimate(fixes, track);
+
+            // 5. Sidebar
+            updateStats(observations.length, targets.length, uniqueUsers.size);
+            updateObservationsList(points);
+            updateTargetsList(targets, addrQueue);
+
+            // 6. Adresse-fallback (kun for krydsninger uden DB-cache)
+            processAddressQueue(addrQueue);
+        }
+
+        // v4: tegn fixes + track-vektor og opdatér track-kortet
+        function renderEstimate(fixes, track) {
+            estLayer.clearLayers();
+            const card = document.getElementById('track-card');
+
+            // Fixes
+            fixes.forEach((f, i) => {
+                const isLatest = i === fixes.length - 1;
+                L.circleMarker([f.lat, f.lon], {
+                    radius: isLatest ? 7 : 4.5,
+                    color: isLatest ? '#fff' : '#bc8cff',
+                    fillColor: '#bc8cff', fillOpacity: 0.9, weight: isLatest ? 2 : 1
+                }).bindPopup(`
+                    <span class="popup-title" style="color:var(--purple)">Fix ${i + 1}${isLatest ? ' (seneste)' : ''}</span>
+                    <span class="popup-detail">Tid: <span class="val">${new Date(f.time).toLocaleTimeString('da-DK')}</span></span>
+                    <span class="popup-detail">Pejlinger: <span class="val">${f.nBearings}</span> fra <span class="val">${f.nSessions}</span> sessioner</span>
+                    <span class="popup-detail">RMS-residual: <span class="val">${Math.round(f.rms)} m</span></span>
+                    <span class="popup-detail">Vinkel-spredning: <span class="val">${Math.round(f.spread)}°</span></span>
+                    ${f.height !== null ? `<span class="popup-detail">Højde: <span class="val">${Math.round(f.height)} m</span></span>` : ''}
+                    <span class="popup-detail">Koordinater: <span class="val">${f.lat.toFixed(5)}, ${f.lon.toFixed(5)}</span></span>
+                `).addTo(estLayer);
+            });
+
+            // Track-linje gennem fixes
+            if (fixes.length > 1) {
+                L.polyline(fixes.map(f => [f.lat, f.lon]),
+                    { color: '#bc8cff', weight: 3, opacity: 0.75 }).addTo(estLayer);
+            }
+
+            if (!track) {
+                card.style.display = fixes.length ? 'block' : 'none';
+                if (fixes.length) {
+                    // Vis seneste fix uden fart/kurs (for få fixes til et fit)
+                    const last = fixes[fixes.length - 1];
+                    document.getElementById('tc-speed').textContent  = '-';
+                    document.getElementById('tc-course').textContent = '-';
+                    document.getElementById('tc-height').textContent = last.height !== null ? `${Math.round(last.height)} m` : '-';
+                    document.getElementById('tc-climb').textContent  = '-';
+                    document.getElementById('tc-meta').textContent   =
+                        `${fixes.length} fix — mindst 3 fixes over 8+ sek kræves for fart/kurs`;
+                }
+                return;
+            }
+
+            // Fremskrivnings-vektor: seneste modelposition + 60 sek frem
+            L.polyline([[track.lastLL.lat, track.lastLL.lon], [track.projLL.lat, track.projLL.lon]],
+                { color: '#bc8cff', weight: 2, opacity: 0.9, dashArray: '2,7' }).addTo(estLayer);
+            L.marker([track.projLL.lat, track.projLL.lon], {
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div class="fix-arrow-icon" style="transform: rotate(${track.course}deg)">&#10148;</div>`,
+                    iconSize: [22, 22], iconAnchor: [11, 11]
+                }),
+                interactive: false
+            }).addTo(estLayer);
+
+            // Track-kort i sidebar
+            card.style.display = 'block';
+            const kmh = track.speed * 3.6;
+            const lastFix = fixes[fixes.length - 1];
+            document.getElementById('tc-speed').textContent  = `${kmh.toFixed(0)} km/t`;
+            document.getElementById('tc-course').textContent = `${Math.round(track.course)}° ${courseToCardinal(track.course)}`;
+            document.getElementById('tc-height').textContent = lastFix.height !== null ? `${Math.round(lastFix.height)} m` : '-';
+            document.getElementById('tc-climb').textContent  = track.climb !== null
+                ? `${track.climb >= 0 ? '+' : ''}${(track.climb * 60).toFixed(0)} m/min` : '-';
+            document.getElementById('tc-meta').textContent =
+                `${track.nFixes} fixes over ${Math.round(track.span)} s — fit-RMS ${Math.round(track.rmsFit)} m`;
+        }
+
+        function updateStats(obsCount, targetCount, userCount) {
+            document.getElementById('stat-obs').textContent     = obsCount;
+            document.getElementById('stat-targets').textContent = targetCount;
+            document.getElementById('stat-users').textContent   = userCount;
+        }
+
+        function updateObservationsList(points) {
+            const container = document.getElementById('observations-list');
+            const empty = document.getElementById('obs-empty');
+            container.querySelectorAll('.obs-item').forEach(i => i.remove());
+
+            if (points.length === 0) {
+                if (!container.contains(empty)) container.appendChild(empty);
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            const sorted = [...points].sort((a, b) => b.time - a.time);
+            sorted.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'obs-item';
+                const timeStr = new Date(p.time).toLocaleTimeString('da-DK',
+                    { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+                div.innerHTML = `
+                    <div class="obs-header">
+                        <span class="obs-time">
+                            <span class="obs-user-dot" style="background:${p.color}"></span>
+                            ${timeStr}
+                        </span>
+                        <span class="obs-id">#${p.id || '?'}</span>
+                    </div>
+                    <div class="obs-body">
+                        <span class="obs-coords">${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</span>
+                        <span class="obs-bearing">${Math.round(p.azi)}°</span>
+                    </div>
+                `;
+                div.addEventListener('click', () => map.setView([p.lat, p.lon], 16));
+                container.appendChild(div);
+            });
+        }
+
+        function updateTargetsList(targets, addrQueue) {
+            const container = document.getElementById('targets-list');
+            const empty = document.getElementById('targets-empty');
+            container.querySelectorAll('.target-item').forEach(i => i.remove());
+
+            if (targets.length === 0) {
+                if (!container.contains(empty)) container.appendChild(empty);
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+
+            targets.forEach((t, idx) => {
+                const div = document.createElement('div');
+                div.className = 'target-item';
+                const sideId = `sidebar-addr-${idx}`;
+                const cachedAddr = t.obs[0].address || t.obs[1].address;
+                const initialAddr = cachedAddr || 'Henter adresse...';
+                const heightStr = t.height != null ? ` &mdash; ${Math.round(t.height)} m højde` : '';
+
+                div.innerHTML = `
+                    <div class="target-coords">${t.lat.toFixed(5)}, ${t.lon.toFixed(5)}</div>
+                    <div class="target-address" id="${sideId}">${initialAddr}</div>
+                    <div class="target-meta">
+                        Vinkel: ${Math.round(t.angle)}° &mdash;
+                        <span class="target-quality ${t.quality.cls}">${t.quality.label}</span>${heightStr}
+                        &mdash; ${new Date(t.time).toLocaleTimeString('da-DK')}
+                    </div>
+                `;
+                div.addEventListener('click', () => map.setView([t.lat, t.lon], 17));
+                container.appendChild(div);
+
+                if (!cachedAddr) addrQueue.push({ lat: t.lat, lon: t.lon, id: sideId });
+            });
+        }
+
+        // --- ADRESSE-KØ (Nominatim fallback) ---
+        const addressCache = {};
+        async function processAddressQueue(queue) {
+            for (const item of queue) {
+                const key = `${item.lat.toFixed(4)},${item.lon.toFixed(4)}`;
+                if (addressCache[key]) {
+                    const el = document.getElementById(item.id);
+                    if (el) el.textContent = addressCache[key];
+                    continue;
+                }
+                try {
+                    const url = `https://nominatim.openstreetmap.org/reverse?format=json`
+                              + `&lat=${item.lat}&lon=${item.lon}&zoom=18&addressdetails=1&accept-language=da`;
+                    const res  = await fetch(url, { headers: { 'Accept-Language': 'da-DK,da;q=0.9' } });
+                    const json = await res.json();
+                    let addr = 'Ukendt';
+                    if (json.address) {
+                        const a = json.address;
+                        const parts = [];
+                        if (a.road || a.pedestrian) parts.push((a.road || a.pedestrian) + (a.house_number ? ' ' + a.house_number : ''));
+                        if (a.city || a.town || a.village) parts.push(a.city || a.town || a.village);
+                        addr = parts.join(', ') || 'Ukendt stednavn';
+                    }
+                    addressCache[key] = addr;
+                    const el = document.getElementById(item.id);
+                    if (el) el.textContent = addr;
+                } catch (e) {
+                    console.warn("Adressefejl:", e);
+                }
+                await new Promise(r => setTimeout(r, 1500));   // Nominatim rate limit
+            }
+        }
+
+        // --- START ---
+        updateDashboard();
+        setInterval(updateDashboard, FETCH_INTERVAL);
+    </script>
+</body>
+</html>

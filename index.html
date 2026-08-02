@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Trigo - Observatør</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0d1117">
+    <link rel="apple-touch-icon" href="icon-192-192.png">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg-primary: #0d1117;
+            --bg-card: rgba(22, 27, 34, 0.92);
+            --bg-glass: rgba(13, 17, 23, 0.75);
+            --accent: #58a6ff;
+            --accent-glow: rgba(88, 166, 255, 0.3);
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #484f58;
+            --border: rgba(48, 54, 61, 0.6);
+            --font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        body, html {
+            height: 100%; width: 100%;
+            overflow: hidden;
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* ===== STARTSKÆRM ===== */
+        #initial-screen {
+            position: fixed; inset: 0;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            background: var(--bg-primary);
+            z-index: 100;
+            text-align: center;
+            padding: 40px 24px;
+        }
+        .logo-icon {
+            width: 80px; height: 80px;
+            margin-bottom: 24px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, var(--accent), #1f6feb);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 36px;
+            box-shadow: 0 8px 32px var(--accent-glow);
+        }
+        #initial-screen h1 { font-size: 1.8em; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.5px; }
+        #initial-screen p { color: var(--text-secondary); font-size: 0.95em; margin-bottom: 32px; max-width: 300px; line-height: 1.5; }
+        #start-button {
+            font-size: 1.05em; padding: 14px 48px; border: none;
+            background: var(--accent); color: #fff; border-radius: 50px;
+            font-weight: 600; cursor: pointer; transition: all 0.2s;
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+        #start-button:active { transform: scale(0.96); }
+        #session-info {
+            position: absolute; bottom: max(16px, env(safe-area-inset-bottom));
+            font-size: 0.7em; color: var(--text-muted); font-family: var(--font-mono);
+        }
+
+        /* ===== KAMERA ===== */
+        #camera-container {
+            position: fixed; inset: 0;
+            display: none; flex-direction: column;
+        }
+        #video-feed {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover; z-index: 0;
+        }
+
+        /* ===== CROSSHAIR ===== */
+        #crosshair-overlay {
+            position: absolute; inset: 0;
+            z-index: 1; pointer-events: none;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .crosshair { position: relative; width: 200px; height: 200px; }
+        .crosshair::before, .crosshair::after { content: ''; position: absolute; background: rgba(255,255,255,0.35); }
+        .crosshair::before { width: 1px; height: 100%; left: 50%; }
+        .crosshair::after { width: 100%; height: 1px; top: 50%; }
+        .crosshair-ring {
+            position: absolute; inset: 25%;
+            border: 1.5px solid rgba(255,255,255,0.25);
+            border-radius: 50%;
+        }
+        .crosshair-dot {
+            position: absolute; width: 6px; height: 6px;
+            background: var(--accent); border-radius: 50%;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        /* ===== KOMPAS RING ===== */
+        #compass-ring {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 260px; height: 260px;
+            transform: translate(-50%, -50%);
+            z-index: 1; pointer-events: none;
+        }
+        .compass-svg { width: 100%; height: 100%; transition: transform 0.1s ease-out; }
+
+        /* ===== TOP BAR ===== */
+        #top-bar {
+            position: relative; z-index: 2;
+            display: flex; justify-content: space-between; align-items: flex-start;
+            padding: 12px 16px;
+            padding-top: max(12px, env(safe-area-inset-top));
+            background: linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, transparent 100%);
+        }
+        #sensor-panel { display: flex; flex-direction: column; gap: 6px; }
+        .sensor-row { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.75em; color: var(--text-secondary); }
+        .sensor-badge {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border);
+        }
+        .sensor-label { color: var(--text-muted); font-size: 0.85em; }
+        .sensor-value { color: var(--text-primary); font-weight: 600; }
+        .accuracy-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+        .accuracy-dot.good   { background: var(--success); box-shadow: 0 0 6px var(--success); }
+        .accuracy-dot.medium { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+        .accuracy-dot.poor   { background: var(--danger);  box-shadow: 0 0 6px var(--danger); }
+        #top-actions { display: flex; gap: 8px; }
+        .action-btn {
+            width: 40px; height: 40px; border: none; border-radius: 50%;
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            color: var(--text-primary); font-size: 1.15em; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.15s; text-decoration: none;
+        }
+        .action-btn:active { transform: scale(0.9); background: var(--bg-card); }
+        .action-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+        /* ===== BOTTOM AREA ===== */
+        #bottom-area {
+            position: relative; z-index: 2;
+            margin-top: auto;
+            display: flex; flex-direction: column; align-items: center;
+            padding: 16px 20px;
+            padding-bottom: max(24px, env(safe-area-inset-bottom));
+            background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 100%);
+        }
+        #heading-display {
+            font-family: var(--font-mono); font-size: 2.8em; font-weight: 700;
+            color: #fff; text-shadow: 0 2px 20px rgba(0,0,0,0.8);
+            margin-bottom: 2px; letter-spacing: -1px;
+        }
+        #heading-display .deg { font-size: 0.6em; color: var(--accent); }
+        #elevation-display { font-family: var(--font-mono); font-size: 0.95em; color: var(--text-secondary); margin-bottom: 18px; }
+        #elevation-display .elev-val { color: var(--warning); font-weight: 600; }
+        #controls-row { display: flex; align-items: center; justify-content: center; gap: 32px; width: 100%; }
+        #shutter-button {
+            width: 72px; height: 72px; border-radius: 50%;
+            background: #fff; border: 4px solid rgba(255,255,255,0.3);
+            cursor: pointer; position: relative; transition: all 0.15s; flex-shrink: 0;
+        }
+        #shutter-button::after {
+            content: ''; position: absolute; inset: 4px;
+            border-radius: 50%; border: 2px solid rgba(0,0,0,0.1);
+        }
+        #shutter-button:active:not(:disabled) { transform: scale(0.9); }
+        #shutter-button:disabled { background: var(--text-muted); border-color: rgba(255,255,255,0.1); cursor: not-allowed; }
+        #shutter-button.tracking {
+            background: var(--danger);
+            border-color: rgba(248,81,73,0.5);
+            animation: trackPulse 1.2s ease-in-out infinite;
+        }
+        #shutter-button.tracking::after { border-color: rgba(255,255,255,0.35); }
+        @keyframes trackPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.55); }
+            50%      { box-shadow: 0 0 0 14px rgba(248,81,73,0); }
+        }
+
+        /* ===== REC BADGE (track-mode) ===== */
+        #rec-badge {
+            position: fixed;
+            top: max(16px, env(safe-area-inset-top));
+            left: 50%; transform: translateX(-50%);
+            z-index: 4;
+            background: rgba(248,81,73,0.15);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--danger); border-radius: 20px;
+            padding: 6px 16px; font-family: var(--font-mono); font-size: 0.82em;
+            color: #fff; display: none; align-items: center; gap: 8px;
+        }
+        #rec-badge .rec-dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: var(--danger);
+            animation: recBlink 1s step-start infinite;
+        }
+        @keyframes recBlink { 50% { opacity: 0.2; } }
+        .side-btn {
+            width: 44px; height: 44px; border: none; border-radius: 50%;
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            color: var(--text-primary); font-size: 1.2em; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .side-btn:active { transform: scale(0.9); }
+        .side-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+        /* ===== TOAST ===== */
+        #toast {
+            position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+            z-index: 50;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border); border-radius: 10px;
+            padding: 10px 20px; font-size: 0.88em;
+            color: var(--text-primary);
+            opacity: 0; transition: opacity 0.3s;
+            pointer-events: none; max-width: 90%; text-align: center;
+        }
+        #toast.show { opacity: 1; }
+        #toast.success { border-color: var(--success); }
+        #toast.error   { border-color: var(--danger); }
+        #toast.info    { border-color: var(--accent); }
+
+        /* ===== FLASH ===== */
+        #flash-overlay { position: fixed; inset: 0; background: #fff; z-index: 40; opacity: 0; pointer-events: none; transition: opacity 0.08s; }
+        #flash-overlay.flash { opacity: 0.5; }
+
+        /* ===== OBS COUNT ===== */
+        #obs-count-badge {
+            position: fixed;
+            bottom: max(100px, calc(env(safe-area-inset-bottom) + 90px));
+            right: 16px; z-index: 3;
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border); border-radius: 10px;
+            padding: 6px 12px; font-family: var(--font-mono); font-size: 0.78em;
+            color: var(--text-secondary); display: none;
+        }
+        #obs-count-badge .count { color: var(--accent); font-weight: 700; font-size: 1.2em; }
+
+        /* ===== MODALS ===== */
+        .modal-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            z-index: 60; display: none;
+            flex-direction: column; justify-content: center; align-items: center; padding: 24px;
+        }
+        .modal-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 28px 24px; text-align: center; max-width: 320px; width: 100%; }
+        .modal-box h3 { font-size: 1.1em; margin-bottom: 6px; font-weight: 600; }
+        .modal-box .modal-desc { color: var(--text-secondary); font-size: 0.85em; margin-bottom: 18px; line-height: 1.4; }
+        #manual-heading-input {
+            font-size: 2.2em; width: 120px; text-align: center;
+            background: var(--bg-primary); color: var(--accent);
+            border: 2px solid var(--border); border-radius: 8px;
+            padding: 8px; font-family: var(--font-mono); font-weight: 700; outline: none;
+        }
+        #manual-heading-input:focus { border-color: var(--accent); }
+        .modal-actions { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+        .btn { padding: 10px 24px; border: none; border-radius: 8px; font-size: 0.95em; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+        .btn:active { transform: scale(0.96); }
+        .btn-primary   { background: var(--accent); color: #fff; }
+        .btn-secondary { background: var(--text-muted); color: var(--text-primary); }
+        .btn-link      { background: transparent; color: var(--accent); padding: 6px 12px; }
+
+        /* Calibration */
+        #calibration-visual { width: 120px; height: 120px; margin: 16px auto; }
+        #cal-progress { width: 100%; height: 4px; background: var(--bg-primary); border-radius: 2px; margin-top: 12px; overflow: hidden; }
+        #cal-progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; border-radius: 2px; }
+
+        /* ===== HISTORY PANEL ===== */
+        #history-panel {
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            border-top: 1px solid var(--border);
+            border-radius: 16px 16px 0 0;
+            max-height: 55vh;
+            transform: translateY(calc(100% - 44px));
+            transition: transform 0.3s ease; display: none;
+        }
+        #history-panel.expanded { transform: translateY(0); }
+        #history-handle { display: flex; align-items: center; justify-content: center; padding: 10px; cursor: pointer; gap: 8px; }
+        .handle-bar { width: 36px; height: 4px; background: var(--text-muted); border-radius: 2px; }
+        #history-handle span { font-size: 0.8em; color: var(--text-secondary); }
+        #history-list { list-style: none; overflow-y: auto; max-height: calc(55vh - 44px); padding: 0 12px 16px; }
+        .history-item {
+            padding: 10px 12px; border-radius: 8px; margin-bottom: 6px;
+            background: rgba(255,255,255,0.04);
+            border-left: 3px solid var(--accent);
+            animation: slideUp 0.3s ease-out; font-size: 0.82em;
+            display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;
+        }
+        .hi-left { display: flex; flex-direction: column; gap: 2px; }
+        .hi-time { color: var(--text-muted); font-size: 0.85em; }
+        .hi-pos { color: var(--text-secondary); font-family: var(--font-mono); font-size: 0.9em; }
+        .hi-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+        .hi-heading { color: var(--accent); font-family: var(--font-mono); font-weight: 700; font-size: 1.1em; }
+        .hi-elev { color: var(--warning); font-family: var(--font-mono); font-size: 0.85em; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* ===== DEBUG PANEL ===== */
+        #debug-panel {
+            position: fixed; top: 50%; left: 8px;
+            z-index: 4;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-family: var(--font-mono);
+            font-size: 0.65em;
+            color: var(--text-muted);
+            line-height: 1.6;
+            display: none;
+            max-width: 180px;
+        }
+        #debug-panel .dval { color: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <!-- STARTSKÆRM -->
+    <div id="initial-screen">
+        <div class="logo-icon">&#x25B3;</div>
+        <h1>Trigo</h1>
+        <p>Peg din telefon mod et objekt for at registrere retning og elevation. Sammen med andre observatører trianguleres objektets position.</p>
+        <button id="start-button">Start Observation</button>
+        <div id="session-info">Session: <span id="session-id-display">…</span></div>
+    </div>
+
+    <div id="flash-overlay"></div>
+    <div id="toast"></div>
+
+    <!-- MODAL: Manuel retning -->
+    <div class="modal-overlay" id="manual-heading-overlay">
+        <div class="modal-box">
+            <h3>Manuel retning</h3>
+            <p class="modal-desc">Indtast kompasretning i grader (0–359)</p>
+            <input type="number" id="manual-heading-input" min="0" max="359" inputmode="numeric">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="manual-heading-cancel">Annuller</button>
+                <button class="btn btn-primary"   id="manual-heading-ok">Sæt retning</button>
+            </div>
+            <button class="btn btn-link" id="manual-heading-auto">Tilbage til auto-kompas</button>
+        </div>
+    </div>
+
+    <!-- MODAL: Kalibrering -->
+    <div class="modal-overlay" id="calibration-overlay">
+        <div class="modal-box">
+            <h3>Kalibrer kompas</h3>
+            <p class="modal-desc">Bevæg telefonen langsomt i et 8-tals mønster</p>
+            <div id="calibration-visual">
+                <svg viewBox="0 0 120 120" width="120" height="120">
+                    <path fill="none" stroke="var(--accent)" stroke-width="2" opacity="0.3"
+                          d="M60,15 C95,15 95,60 60,60 C25,60 25,105 60,105 C95,105 95,60 60,60 C25,60 25,15 60,15 Z"/>
+                    <circle cx="60" cy="15" r="6" fill="var(--accent)" opacity="0.8">
+                        <animateMotion dur="3s" repeatCount="indefinite"
+                            path="M0,0 C35,0 35,45 0,45 C-35,45 -35,90 0,90 C35,90 35,45 0,45 C-35,45 -35,0 0,0 Z"/>
+                    </circle>
+                </svg>
+            </div>
+            <div id="cal-progress"><div id="cal-progress-bar"></div></div>
+            <p id="calibration-status" style="color: var(--text-secondary); font-size: 0.9em; margin-top: 10px;">Bevæg telefonen...</p>
+        </div>
+    </div>
+
+    <!-- HOVED APP -->
+    <div id="camera-container">
+        <video id="video-feed" playsinline autoplay muted></video>
+
+        <div id="crosshair-overlay">
+            <div class="crosshair">
+                <div class="crosshair-ring"></div>
+                <div class="crosshair-dot"></div>
+            </div>
+        </div>
+
+        <div id="compass-ring">
+            <svg class="compass-svg" viewBox="0 0 260 260" id="compass-svg">
+                <circle cx="130" cy="130" r="122" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+            </svg>
+        </div>
+
+        <div id="top-bar">
+            <div id="sensor-panel">
+                <div class="sensor-row">
+                    <div class="sensor-badge">
+                        <span class="accuracy-dot poor" id="gps-dot"></span>
+                        <span class="sensor-label">GPS</span>
+                        <span class="sensor-value" id="lat-display">--</span><span class="sensor-label">,</span>
+                        <span class="sensor-value" id="lon-display">--</span>
+                    </div>
+                </div>
+                <div class="sensor-row">
+                    <div class="sensor-badge">
+                        <span class="accuracy-dot poor" id="acc-dot"></span>
+                        <span class="sensor-label">±</span>
+                        <span class="sensor-value" id="acc-display">--</span><span class="sensor-label">m</span>
+                    </div>
+                    <div class="sensor-badge">
+                        <span class="sensor-label" id="sensor-mode-label">Init</span>
+                    </div>
+                </div>
+            </div>
+            <div id="top-actions">
+                <button class="action-btn" id="calibrate-btn"    title="Kalibrer kompas">&#x1F504;</button>
+                <button class="action-btn" id="connect-bno-btn"  title="Ekstern sensor">&#x1F6F0;&#xFE0F;</button>
+                <button class="action-btn" id="debug-toggle-btn" title="Debug info">&#x1F41B;</button>
+                <a href="dashboard.html" target="_blank" class="action-btn" title="Dashboard">&#x1F5FA;&#xFE0F;</a>
+            </div>
+        </div>
+
+        <div id="debug-panel">
+            Sensor: <span class="dval" id="dbg-sensor">-</span><br>
+            Raw α: <span class="dval" id="dbg-alpha">-</span><br>
+            Raw β: <span class="dval" id="dbg-beta">-</span><br>
+            Raw γ: <span class="dval" id="dbg-gamma">-</span><br>
+            Abs: <span class="dval" id="dbg-absolute">-</span><br>
+            webkit: <span class="dval" id="dbg-webkit">-</span><br>
+            Calc H: <span class="dval" id="dbg-heading">-</span><br>
+            Calc P: <span class="dval" id="dbg-pitch">-</span>
+        </div>
+
+        <div id="obs-count-badge">
+            <span class="count" id="obs-count">0</span> obs.
+        </div>
+
+        <div id="rec-badge">
+            <span class="rec-dot"></span>
+            <span id="rec-text">TRACK 0 obs &middot; 0 s</span>
+        </div>
+
+        <div id="bottom-area">
+            <div id="heading-display">---<span class="deg">°</span></div>
+            <div id="elevation-display">Elevation: <span class="elev-val" id="elev-display">--</span>°</div>
+            <div id="controls-row">
+                <button class="side-btn" id="manual-heading-btn"  title="Manuel retning">&#x1F9ED;</button>
+                <button id="shutter-button" disabled></button>
+                <button class="side-btn" id="history-toggle-btn"  title="Historik">&#x1F4CB;</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- HISTORIK PANEL -->
+    <div id="history-panel">
+        <div id="history-handle">
+            <div class="handle-bar"></div>
+            <span id="history-count">0 observationer</span>
+        </div>
+        <ul id="history-list"></ul>
+    </div>
+
+    <script>
+        // ============================================================
+        //  TRIGO – MOBIL OBSERVATØR
+        //  Version 4.0
+        //
+        //  NYT i v4:
+        //    • TRACK-MODE: langt tryk på udløseren starter kontinuerlig
+        //      optagelse (~1,25 Hz) mens sigtekornet holdes på objektet.
+        //      Kort tryk stopper igen. Data sendes i batches.
+        //    • Numeriske, kollisionsfri observations-id'er.
+        //
+        //  Vigtigste ændringer ift. v2:
+        //    1. RETTET legacy-kompas-heading. camNorth havde en
+        //       overflødig negation som gav 180° forkert retning på
+        //       Android-browsere.
+        //    2. session_id genereres og gemmes i localStorage. Sendes
+        //       med hver observation. Dashboardet bruger det til at
+        //       skelne brugere — uden det blokeres alle krydsninger.
+        //    3. Throttling på sensor-handler (max ~15 Hz til DOM).
+        //    4. Manual-heading toggle kan slå auto til igen direkte
+        //       fra dialogen.
+        //    5. Service worker registreres efter load (med skipWaiting
+        //       så opdateringer træder i kraft).
+        //    6. Højdeestimat i Shutter — også når altitude er ukendt.
+        // ============================================================
+
+        const $ = id => document.getElementById(id);
+
+        // --- SESSION ID -------------------------------------------------
+        function getOrCreateSessionId() {
+            let s = null;
+            try { s = localStorage.getItem('trigo_session_id'); } catch (e) {}
+            if (!s || !/^[a-zA-Z0-9\-_]{6,40}$/.test(s)) {
+                const buf = new Uint8Array(8);
+                (crypto || window.crypto).getRandomValues(buf);
+                s = 'u-' + Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+                try { localStorage.setItem('trigo_session_id', s); } catch (e) {}
+            }
+            return s;
+        }
+        const SESSION_ID = getOrCreateSessionId();
+        $('session-id-display').textContent = SESSION_ID;
+
+        // --- DOM --------------------------------------------------------
+        const startButton = $('start-button'), initialScreen = $('initial-screen');
+        const cameraContainer = $('camera-container'), videoFeed = $('video-feed');
+        const shutterButton = $('shutter-button'), toast = $('toast'), flashOverlay = $('flash-overlay');
+        const latDisplay = $('lat-display'), lonDisplay = $('lon-display'), accDisplay = $('acc-display');
+        const headingDisplay = $('heading-display'), elevDisplay = $('elev-display');
+        const gpsDot = $('gps-dot'), accDot = $('acc-dot');
+        const sensorModeLabel = $('sensor-mode-label');
+        const manualHeadingBtn = $('manual-heading-btn'), manualHeadingOverlay = $('manual-heading-overlay');
+        const manualHeadingInput = $('manual-heading-input');
+        const manualHeadingOk = $('manual-heading-ok'), manualHeadingCancel = $('manual-heading-cancel');
+        const manualHeadingAuto = $('manual-heading-auto');
+        const calibrateBtn = $('calibrate-btn'), calibrationOverlay = $('calibration-overlay');
+        const calibrationStatus = $('calibration-status'), calProgressBar = $('cal-progress-bar');
+        const connectBnoBtn = $('connect-bno-btn');
+        const compassSvg = $('compass-svg');
+        const historyPanel = $('history-panel'), historyList = $('history-list');
+        const historyHandle = $('history-handle'), historyToggleBtn = $('history-toggle-btn');
+        const historyCountEl = $('history-count');
+        const obsCountBadge = $('obs-count-badge'), obsCountEl = $('obs-count');
+        const debugPanel = $('debug-panel'), debugToggleBtn = $('debug-toggle-btn');
+
+        // --- STATE ------------------------------------------------------
+        let currentPosition = null, currentAccuracy = null;
+        let currentHeading = null, currentPitch = null;
+        let videoStream = null, smoothedHeading = null;
+        const SMOOTHING = 0.18;
+        const SENSOR_THROTTLE_MS = 60;     // ~16 Hz til DOM
+        let lastSensorUpdate = 0;
+        let isManualHeading = false, isCalibrating = false;
+        let sensorMode = 'internal';        // 'internal' | 'bno055'
+        let observationHistory = [];
+        let sessionObsCount = 0;
+        let debugVisible = false;
+
+        // ===== DEBUG =====
+        debugToggleBtn.addEventListener('click', () => {
+            debugVisible = !debugVisible;
+            debugPanel.style.display = debugVisible ? 'block' : 'none';
+            debugToggleBtn.classList.toggle('active', debugVisible);
+        });
+        function updateDebug(data) {
+            if (!debugVisible) return;
+            for (const [k, v] of Object.entries(data)) {
+                const el = $(`dbg-${k}`);
+                if (el) el.textContent = v;
+            }
+        }
+
+        // ===== KOMPAS SVG =====
+        (function buildCompassTicks() {
+            const cx = 130, cy = 130, r = 118;
+            const labels = {0:'N', 45:'NØ', 90:'Ø', 135:'SØ', 180:'S', 225:'SV', 270:'V', 315:'NV'};
+            let svg = '';
+            for (let deg = 0; deg < 360; deg += 5) {
+                const rad = (deg - 90) * Math.PI / 180;
+                const isCardinal = deg % 90 === 0;
+                const isMajor = deg % 30 === 0;
+                const isInter = deg % 45 === 0 && !isCardinal;
+                const len = isCardinal ? 14 : isMajor ? 9 : isInter ? 7 : 4;
+                const x1 = cx + (r - len) * Math.cos(rad);
+                const y1 = cy + (r - len) * Math.sin(rad);
+                const x2 = cx + r * Math.cos(rad);
+                const y2 = cy + r * Math.sin(rad);
+                const col = isCardinal ? 'rgba(255,255,255,0.7)' : isMajor ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)';
+                const w = isCardinal ? 2 : 1;
+                svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="${w}"/>`;
+                if (labels[deg]) {
+                    const lx = cx + (r - 24) * Math.cos(rad);
+                    const ly = cy + (r - 24) * Math.sin(rad);
+                    const fc = deg === 0 ? '#f85149' : 'rgba(255,255,255,0.55)';
+                    const fs = isCardinal ? 13 : 9;
+                    svg += `<text x="${lx}" y="${ly}" fill="${fc}" font-size="${fs}" font-weight="700"
+                                  text-anchor="middle" dominant-baseline="central" font-family="sans-serif">${labels[deg]}</text>`;
+                }
+            }
+            svg += `<polygon points="130,10 126,20 134,20" fill="#f85149"/>`;
+            compassSvg.innerHTML += svg;
+        })();
+
+        function updateCompass(heading) {
+            if (heading === null) return;
+            compassSvg.style.transform = `rotate(${-heading}deg)`;
+        }
+
+        // ===== HEADING SMOOTHING =====
+        function smoothHeading(raw) {
+            if (smoothedHeading === null) {
+                smoothedHeading = raw;
+            } else {
+                let diff = raw - smoothedHeading;
+                if (diff > 180)  diff -= 360;
+                if (diff < -180) diff += 360;
+                smoothedHeading += SMOOTHING * diff;
+                smoothedHeading = ((smoothedHeading % 360) + 360) % 360;
+            }
+            return Math.round(smoothedHeading);
+        }
+
+        // ===== START =====
+        startButton.addEventListener('click', () => {
+            initialScreen.style.display = 'none';
+            cameraContainer.style.display = 'flex';
+            historyPanel.style.display = 'block';
+            obsCountBadge.style.display = 'block';
+            initializeSensorsAndCamera();
+        });
+
+        // ============================================================
+        //  SHUTTER — v4
+        //
+        //  • Kort tryk  = enkelt observation (som før).
+        //  • Langt tryk (>450 ms) = TRACK-MODE: hold sigtekornet på
+        //    objektet, og appen optager en pejling hver 0,8 sek indtil
+        //    du trykker på knappen igen. Observationer sendes i
+        //    batches af 4 (og ved stop) til save_data.php.
+        //
+        //  Én enkelt pejling med ±10° kompasstøj giver en meget usikker
+        //  krydsning — 20 pejlinger over 15 sek giver dashboardet nok
+        //  data til et rigtigt least-squares fix + fart/kurs-estimat.
+        // ============================================================
+
+        const TRACK_INTERVAL_MS = 800;
+        const TRACK_BATCH_SIZE  = 4;
+        const LONG_PRESS_MS     = 450;
+
+        const recBadge = $('rec-badge'), recText = $('rec-text');
+        let isTracking = false;
+        let trackTimer = null, holdTimer = null, longPressFired = false;
+        let trackBuffer = [];
+        let trackCount = 0, trackStartTime = 0;
+        let idCounter = 0;
+
+        function makeObsId() {
+            // Numerisk, monotont, kollisionsfrit ved 1+ Hz:
+            // ms-timestamp * 1000 + tæller (holder sig under 2^53).
+            idCounter = (idCounter + 1) % 1000;
+            return Date.now() * 1000 + idCounter;
+        }
+
+        function captureRecord() {
+            const safeAlt = (currentPosition.altitude != null && !isNaN(currentPosition.altitude))
+                ? currentPosition.altitude : 2.0;
+            const safePitch = (currentPitch != null && !isNaN(currentPitch)) ? currentPitch : 0;
+            return {
+                id: makeObsId(),
+                session_id: SESSION_ID,
+                timestamp: new Date().toISOString(),
+                position: {
+                    latitude:  currentPosition.latitude,
+                    longitude: currentPosition.longitude,
+                    altitude:  safeAlt
+                },
+                accuracy: currentAccuracy,
+                heading: currentHeading,
+                elevation_angle: safePitch
+            };
+        }
+
+        async function sendBatch(records) {
+            if (!records.length) return;
+            try {
+                const response = await fetch('save_data.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(
+                        records.length === 1
+                            ? records[0]
+                            : { session_id: SESSION_ID, observations: records }
+                    )
+                });
+                const text = await response.text();
+                let result;
+                try { result = JSON.parse(text); }
+                catch (e) {
+                    console.error("Server-svar:", text);
+                    return showToast('Ugyldigt svar fra server', 'error');
+                }
+                if (result.status === 'success') {
+                    sessionObsCount += (result.saved ?? records.length);
+                    obsCountEl.textContent = sessionObsCount;
+                    if (!isTracking && records.length === 1) {
+                        showToast(`Gemt: ${records[0].heading}° azimut, ${records[0].elevation_angle}° elevation`, 'success');
+                    }
+                } else {
+                    showToast(`Serverfejl: ${result.message}`, 'error');
+                }
+            } catch (err) {
+                showToast(`Netværksfejl: ${err.message}`, 'error');
+            }
+        }
+
+        function singleShot() {
+            if (!currentPosition || currentHeading === null) {
+                return showToast('Venter på GPS og kompas...', 'error');
+            }
+            if (currentAccuracy && currentAccuracy > 100) {
+                showToast(`Bemærk: GPS-præcision ±${Math.round(currentAccuracy)} m`, 'info');
+            }
+            flashOverlay.classList.add('flash');
+            setTimeout(() => flashOverlay.classList.remove('flash'), 150);
+            if (navigator.vibrate) navigator.vibrate(30);
+
+            const record = captureRecord();
+            addToHistory(record);
+            sendBatch([record]);
+        }
+
+        function startTracking() {
+            if (!currentPosition || currentHeading === null) {
+                return showToast('Venter på GPS og kompas...', 'error');
+            }
+            isTracking = true;
+            trackCount = 0;
+            trackStartTime = Date.now();
+            trackBuffer = [];
+            shutterButton.classList.add('tracking');
+            recBadge.style.display = 'flex';
+            if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
+            showToast('Track-mode: hold sigtekornet på objektet. Tryk igen for at stoppe.', 'info');
+
+            trackTimer = setInterval(() => {
+                if (!currentPosition || currentHeading === null) return;
+                trackBuffer.push(captureRecord());
+                trackCount++;
+                const secs = Math.round((Date.now() - trackStartTime) / 1000);
+                recText.textContent = `TRACK ${trackCount} obs \u00B7 ${secs} s`;
+                if (trackBuffer.length >= TRACK_BATCH_SIZE) {
+                    const batch = trackBuffer;
+                    trackBuffer = [];
+                    sendBatch(batch);
+                }
+            }, TRACK_INTERVAL_MS);
+        }
+
+        function stopTracking() {
+            isTracking = false;
+            clearInterval(trackTimer);
+            trackTimer = null;
+            shutterButton.classList.remove('tracking');
+            recBadge.style.display = 'none';
+            if (navigator.vibrate) navigator.vibrate(60);
+
+            const remaining = trackBuffer;
+            trackBuffer = [];
+            sendBatch(remaining);
+
+            const secs = Math.round((Date.now() - trackStartTime) / 1000);
+            if (trackCount > 0) {
+                addTrackSummaryToHistory(trackCount, secs);
+                showToast(`Track afsluttet: ${trackCount} observationer på ${secs} s`, 'success');
+            }
+        }
+
+        // Pointer-logik: kort tryk = enkeltskud / stop track;
+        // langt tryk = start track.
+        shutterButton.addEventListener('pointerdown', e => {
+            if (shutterButton.disabled) return;
+            longPressFired = false;
+            if (isTracking) return; // stop håndteres på pointerup
+            holdTimer = setTimeout(() => {
+                longPressFired = true;
+                startTracking();
+            }, LONG_PRESS_MS);
+        });
+        shutterButton.addEventListener('pointerup', e => {
+            if (shutterButton.disabled) return;
+            clearTimeout(holdTimer);
+            if (isTracking) {
+                if (!longPressFired) stopTracking();   // kort tryk under track = stop
+                return;
+            }
+            if (!longPressFired) singleShot();
+        });
+        shutterButton.addEventListener('pointercancel', () => clearTimeout(holdTimer));
+        // Undgå at long-press åbner context-menu på Android
+        shutterButton.addEventListener('contextmenu', e => e.preventDefault());
+
+        function addTrackSummaryToHistory(count, secs) {
+            const li = document.createElement('li');
+            li.className = 'history-item';
+            const timeStr = new Date().toLocaleTimeString('da-DK', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            li.innerHTML = `
+                <div class="hi-left">
+                    <span class="hi-time">${timeStr}</span>
+                    <span class="hi-pos" style="color:var(--danger)">&#9210; Track-optagelse</span>
+                </div>
+                <div class="hi-right">
+                    <span class="hi-heading">${count} obs</span>
+                    <span class="hi-elev">${secs} s</span>
+                </div>
+            `;
+            historyList.prepend(li);
+            observationHistory.unshift({ track: true });
+            historyCountEl.textContent = `${observationHistory.length} poster`;
+        }
+
+        // ===== HISTORIK =====
+        function addToHistory(record) {
+            observationHistory.unshift(record);
+            const li = document.createElement('li');
+            li.className = 'history-item';
+            const t = new Date(record.timestamp);
+            const timeStr = t.toLocaleTimeString('da-DK', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            li.innerHTML = `
+                <div class="hi-left">
+                    <span class="hi-time">${timeStr}</span>
+                    <span class="hi-pos">${record.position.latitude.toFixed(5)}, ${record.position.longitude.toFixed(5)}</span>
+                </div>
+                <div class="hi-right">
+                    <span class="hi-heading">${record.heading}°</span>
+                    <span class="hi-elev">elev ${record.elevation_angle}°</span>
+                </div>
+            `;
+            historyList.prepend(li);
+            historyCountEl.textContent = `${observationHistory.length} observation${observationHistory.length !== 1 ? 'er' : ''}`;
+        }
+        historyHandle.addEventListener('click',     () => historyPanel.classList.toggle('expanded'));
+        historyToggleBtn.addEventListener('click',  () => historyPanel.classList.toggle('expanded'));
+
+        // ===== SENSORER & KAMERA =====
+        async function initializeSensorsAndCamera() {
+            // Kamera
+            try {
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+                });
+                videoFeed.srcObject = videoStream;
+                await videoFeed.play().catch(() => {/* iOS autoplay quirk */});
+            } catch (err) {
+                showToast(`Kamerafejl: ${err.message}`, 'error');
+            }
+
+            // GPS
+            navigator.geolocation.watchPosition(
+                pos => {
+                    currentPosition = pos.coords;
+                    currentAccuracy = pos.coords.accuracy;
+                    latDisplay.textContent = pos.coords.latitude.toFixed(5);
+                    lonDisplay.textContent = pos.coords.longitude.toFixed(5);
+                    accDisplay.textContent = Math.round(pos.coords.accuracy);
+                    const a = pos.coords.accuracy;
+                    const cls = a < 10 ? 'good' : a < 30 ? 'medium' : 'poor';
+                    gpsDot.className = 'accuracy-dot ' + cls;
+                    accDot.className = 'accuracy-dot ' + cls;
+                    checkReady();
+                },
+                err => showToast(`GPS fejl: ${err.message}`, 'error'),
+                { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+            );
+
+            // Orientation – prøv moderne sensor først, fallback til legacy
+            try {
+                if (!('AbsoluteOrientationSensor' in window)) throw new Error("Ikke understøttet");
+                const perms = await Promise.all([
+                    navigator.permissions.query({ name: "accelerometer" }),
+                    navigator.permissions.query({ name: "gyroscope" }),
+                    navigator.permissions.query({ name: "magnetometer" })
+                ]);
+                if (perms.some(p => p.state === 'denied')) throw new Error("Denied");
+                startModernSensor();
+            } catch (e) {
+                console.warn("Falder tilbage til legacy sensor:", e.message);
+                startLegacySensor();
+            }
+        }
+
+        // =====================================================
+        //  MODERNE SENSOR (AbsoluteOrientationSensor) — uændret matematik
+        // =====================================================
+        function startModernSensor() {
+            try {
+                const sensor = new AbsoluteOrientationSensor({ frequency: 30, referenceFrame: 'device' });
+                sensor.addEventListener('reading', () => {
+                    if (sensorMode === 'bno055' || isManualHeading || isCalibrating) return;
+                    const now = performance.now();
+                    if (now - lastSensorUpdate < SENSOR_THROTTLE_MS) return;
+                    lastSensorUpdate = now;
+
+                    const [x, y, z, w] = sensor.quaternion;
+
+                    // Kameraet peger langs telefonens -Z. Verdens-frame er ENU.
+                    // R · (0,0,-1) = -tredje kolonne af R.
+                    const camEast  = -(2 * (x * z + w * y));
+                    const camNorth = -(2 * (y * z - w * x));
+                    const camUp    = -(1 - 2 * (x * x + y * y));
+
+                    let heading = Math.atan2(camEast, camNorth) * 180 / Math.PI;
+                    heading = (heading + 360) % 360;
+                    currentHeading = smoothHeading(heading);
+
+                    const horiz = Math.sqrt(camEast * camEast + camNorth * camNorth);
+                    currentPitch = Math.round(Math.atan2(camUp, horiz) * 180 / Math.PI);
+
+                    updateDebug({
+                        sensor: 'Modern', alpha: '-', beta: '-', gamma: '-',
+                        absolute: 'Quat', webkit: '-',
+                        heading: currentHeading, pitch: currentPitch
+                    });
+                    updateSensorDisplay();
+                });
+                sensor.addEventListener('error', e => { throw e.error; });
+                sensor.start();
+                sensorModeLabel.textContent = 'Fusion';
+            } catch (e) {
+                console.warn("Moderne sensor fejl:", e);
+                startLegacySensor();
+            }
+        }
+
+        // =====================================================
+        //  LEGACY SENSOR (deviceorientation / deviceorientationabsolute)
+        //
+        //  RETTET (v3): camNorth havde en overflødig outer-negation
+        //  som vendte retningen 180°. Med W3C-konventionen
+        //  (Rz(α)·Rx(β)·Ry(γ), α CCW omkring +Z) er den tredje
+        //  kolonne af R:
+        //     R13 = cα·sγ + sα·sβ·cγ
+        //     R23 = sα·sγ − cα·sβ·cγ
+        //     R33 = cβ·cγ
+        //  Kameraet peger i -Z-device → komponenter i ENU:
+        //     camEast  = −(cα·sγ + sα·sβ·cγ)
+        //     camNorth = −(sα·sγ − cα·sβ·cγ)  =  cα·sβ·cγ − sα·sγ
+        //     camUp    = −(cβ·cγ)
+        //
+        //  Sanity check: α=0, β=90, γ=0 → camEast=0, camNorth=+1,
+        //  camUp=0  ⇒ heading=0° (nord) ✓
+        // =====================================================
+        function startLegacySensor() {
+            sensorModeLabel.textContent = 'Kompas';
+
+            const handler = (event) => {
+                if (sensorMode === 'bno055' || isManualHeading || isCalibrating) return;
+                const now = performance.now();
+                if (now - lastSensorUpdate < SENSOR_THROTTLE_MS) return;
+                lastSensorUpdate = now;
+
+                updateDebug({
+                    sensor: 'Legacy',
+                    alpha: event.alpha != null ? event.alpha.toFixed(1) : '-',
+                    beta:  event.beta  != null ? event.beta.toFixed(1)  : '-',
+                    gamma: event.gamma != null ? event.gamma.toFixed(1) : '-',
+                    absolute: String(event.absolute),
+                    webkit:   event.webkitCompassHeading != null
+                                ? event.webkitCompassHeading.toFixed(1) : '-'
+                });
+
+                // --- iOS: webkitCompassHeading er allerede ægte kompas ---
+                if (event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null) {
+                    currentHeading = smoothHeading(event.webkitCompassHeading);
+                    if (event.beta != null) {
+                        let p = event.beta - 90;          // β=90 (lodret portræt) ⇒ p=0
+                        if (p > 90)  p = 180 - p;
+                        if (p < -90) p = -180 - p;
+                        currentPitch = Math.round(p);
+                    }
+                    updateDebug({ heading: currentHeading, pitch: currentPitch });
+                    updateSensorDisplay();
+                    return;
+                }
+
+                // --- Android: beregn heading fra α/β/γ ---
+                if (event.alpha == null || event.beta == null || event.gamma == null) return;
+
+                const aR = event.alpha * Math.PI / 180;
+                const bR = event.beta  * Math.PI / 180;
+                const gR = event.gamma * Math.PI / 180;
+
+                const cA = Math.cos(aR), sA = Math.sin(aR);
+                const cB = Math.cos(bR), sB = Math.sin(bR);
+                const cG = Math.cos(gR), sG = Math.sin(gR);
+
+                // Kameraretning (-Z device) i verdens-ENU
+                const camEast  = -(cA * sG + sA * sB * cG);
+                const camNorth =  (cA * sB * cG - sA * sG);   // <- RETTET sign
+                const camUp    = -(cB * cG);
+
+                let heading = Math.atan2(camEast, camNorth) * 180 / Math.PI;
+                heading = (heading + 360) % 360;
+                currentHeading = smoothHeading(heading);
+
+                const horiz = Math.sqrt(camEast * camEast + camNorth * camNorth);
+                currentPitch = Math.round(Math.atan2(camUp, horiz) * 180 / Math.PI);
+
+                updateDebug({ heading: currentHeading, pitch: currentPitch });
+                updateSensorDisplay();
+            };
+
+            const register = () => {
+                if ('ondeviceorientationabsolute' in window) {
+                    window.addEventListener('deviceorientationabsolute', handler, true);
+                    sensorModeLabel.textContent = 'Kompas (abs)';
+                } else {
+                    window.addEventListener('deviceorientation', handler, true);
+                    sensorModeLabel.textContent = 'Kompas';
+                }
+            };
+
+            if (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(state => {
+                    if (state === 'granted') register();
+                    else showToast('Kompas-adgang nægtet', 'error');
+                }).catch(() => showToast('Kompas-tilladelse fejlede', 'error'));
+            } else if ('DeviceOrientationEvent' in window) {
+                register();
+            } else {
+                showToast('Kompas ikke understøttet på denne enhed', 'error');
+            }
+        }
+
+        // ===== DISPLAY UPDATE =====
+        function updateSensorDisplay() {
+            if (currentHeading !== null) {
+                headingDisplay.innerHTML = `${currentHeading}<span class="deg">°</span>`;
+                updateCompass(currentHeading);
+            }
+            if (currentPitch !== null) {
+                elevDisplay.textContent = currentPitch;
+            }
+            checkReady();
+        }
+        function checkReady() {
+            if (videoStream && currentPosition && currentHeading !== null) {
+                shutterButton.disabled = false;
+            }
+        }
+
+        // ===== MANUEL RETNING =====
+        function openManualHeadingDialog() {
+            manualHeadingInput.value = currentHeading != null ? currentHeading : 0;
+            manualHeadingOverlay.style.display = 'flex';
+            setTimeout(() => manualHeadingInput.focus(), 100);
+        }
+        function setAutoMode() {
+            isManualHeading = false;
+            smoothedHeading = null;
+            manualHeadingBtn.classList.remove('active');
+            manualHeadingOverlay.style.display = 'none';
+            showToast('Auto-kompas aktiveret', 'info');
+        }
+        function confirmManualHeading() {
+            const val = parseInt(manualHeadingInput.value);
+            if (!isNaN(val) && val >= 0 && val < 360) {
+                isManualHeading = true;
+                currentHeading = val;
+                smoothedHeading = val;
+                headingDisplay.innerHTML = `${val}<span class="deg">°</span>`;
+                updateCompass(val);
+                manualHeadingOverlay.style.display = 'none';
+                manualHeadingBtn.classList.add('active');
+                showToast(`Manuel retning: ${val}°`, 'info');
+            } else {
+                showToast('Indtast 0–359', 'error');
+            }
+        }
+        manualHeadingBtn.addEventListener('click', openManualHeadingDialog);
+        manualHeadingCancel.addEventListener('click', () => { manualHeadingOverlay.style.display = 'none'; });
+        manualHeadingAuto.addEventListener('click', setAutoMode);
+        manualHeadingOk.addEventListener('click', confirmManualHeading);
+        manualHeadingInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); confirmManualHeading(); }
+        });
+
+        // ===== KALIBRERING =====
+        calibrateBtn.addEventListener('click', () => {
+            isCalibrating = true;
+            calibrationOverlay.style.display = 'flex';
+            calibrationStatus.textContent = 'Bevæg telefonen i et 8-tal...';
+            calProgressBar.style.width = '0%';
+            calProgressBar.style.background = 'var(--accent)';
+
+            let aR = {min: 361, max: -1};
+            let bR = {min: 181, max: -181};
+            let gR = {min:  91, max:  -91};
+
+            const calListener = (event) => {
+                if (event.alpha == null) return;
+                aR.min = Math.min(aR.min, event.alpha); aR.max = Math.max(aR.max, event.alpha);
+                bR.min = Math.min(bR.min, event.beta);  bR.max = Math.max(bR.max, event.beta);
+                gR.min = Math.min(gR.min, event.gamma); gR.max = Math.max(gR.max, event.gamma);
+
+                const progress = Math.min(100,
+                    (((aR.max - aR.min) / 300 + (bR.max - bR.min) / 150 + (gR.max - gR.min) / 150) / 3) * 100);
+                calProgressBar.style.width = `${progress}%`;
+
+                if ((aR.max - aR.min) > 300 &&
+                    (bR.max - bR.min) > 150 &&
+                    (gR.max - gR.min) > 150) {
+                    calibrationStatus.textContent = 'Kalibrering fuldført!';
+                    calProgressBar.style.width = '100%';
+                    calProgressBar.style.background = 'var(--success)';
+                    window.removeEventListener('deviceorientation', calListener);
+                    window.removeEventListener('deviceorientationabsolute', calListener);
+                    setTimeout(() => {
+                        calibrationOverlay.style.display = 'none';
+                        isCalibrating = false;
+                        smoothedHeading = null;
+                        showToast('Kompas kalibreret', 'success');
+                    }, 1200);
+                }
+            };
+
+            if (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(state => {
+                    if (state === 'granted') window.addEventListener('deviceorientation', calListener);
+                });
+            } else {
+                window.addEventListener('deviceorientation', calListener);
+                if ('ondeviceorientationabsolute' in window) {
+                    window.addEventListener('deviceorientationabsolute', calListener);
+                }
+            }
+        });
+
+        // ===== BNO055 BLUETOOTH =====
+        connectBnoBtn.addEventListener('click', async () => {
+            if (!navigator.bluetooth) return showToast('Bluetooth ikke understøttet', 'error');
+            try {
+                showToast('Søger BNO055...', 'info');
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+                });
+                device.addEventListener('gattserverdisconnected', () => {
+                    sensorMode = 'internal';
+                    sensorModeLabel.textContent = 'Telefon';
+                    smoothedHeading = null;
+                    connectBnoBtn.classList.remove('active');
+                    showToast('BNO055 afbrudt', 'info');
+                });
+
+                const server  = await device.gatt.connect();
+                const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+                const char    = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+                await char.startNotifications();
+
+                sensorMode = 'bno055';
+                sensorModeLabel.textContent = 'BNO055';
+                connectBnoBtn.classList.add('active');
+                showToast('BNO055 forbundet!', 'success');
+
+                char.addEventListener('characteristicvaluechanged', event => {
+                    const now = performance.now();
+                    if (now - lastSensorUpdate < SENSOR_THROTTLE_MS) return;
+                    lastSensorUpdate = now;
+
+                    const v = event.target.value;
+                    currentPitch   = Math.round(v.getFloat32(0, true));
+                    currentHeading = Math.round(v.getFloat32(4, true));
+                    updateSensorDisplay();
+                });
+            } catch (err) {
+                showToast(`Bluetooth: ${err.message}`, 'error');
+                sensorMode = 'internal';
+                connectBnoBtn.classList.remove('active');
+            }
+        });
+
+        // ===== TOAST =====
+        let toastTimer = null;
+        function showToast(message, type = 'success') {
+            toast.textContent = message;
+            toast.className = `show ${type}`;
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { toast.className = ''; }, 2800);
+        }
+
+        // ===== CLEANUP =====
+        window.addEventListener('beforeunload', () => {
+            if (videoStream) videoStream.getTracks().forEach(t => t.stop());
+            // Flush evt. usendte track-observationer
+            if (trackBuffer.length && navigator.sendBeacon) {
+                const payload = JSON.stringify({ session_id: SESSION_ID, observations: trackBuffer });
+                navigator.sendBeacon('save_data.php', new Blob([payload], { type: 'application/json' }));
+                trackBuffer = [];
+            }
+        });
+
+        // ===== SERVICE WORKER =====
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => {
+                        // Tjek for opdatering ved hver indlæsning
+                        reg.update().catch(() => {});
+                    })
+                    .catch(err => console.warn('SW register fejl:', err));
+            });
+        }
+    </script>
+</body>
+</html>
