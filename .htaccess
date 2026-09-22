@@ -36,3 +36,16 @@
   AddHandler application/x-httpd-ea-php81 .php .php8 .phtml
 </IfModule>
 # php -- END cPanel-generated handler, do not edit
+
+# ---------------------------------------------------------------
+#  Trigo: bloker direkte adgang til logfiler, SQL, docs og config.
+#  observation_log.txt indeholder IP-adresser + positioner og må
+#  ikke kunne hentes af alle.
+# ---------------------------------------------------------------
+<FilesMatch "(\.(txt|log|sql|md|ini)$|^db_config.*\.php$|^helpers\.php$|^error_log$)">
+    Require all denied
+</FilesMatch>
+<FilesMatch "^robots\.txt$">
+    Require all granted
+</FilesMatch>
+RedirectMatch 404 /\.git

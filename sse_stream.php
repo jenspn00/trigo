@@ -20,20 +20,29 @@ $lastId = $row['max_id'] ?? '0';
 // Fjern tidsgrænsen for eksekvering
 set_time_limit(0);
 
-// Kør i en uendelig løkke
-while (true) {
+// Hver SSE-klient binder en PHP-worker. Stop efter 5 min —
+// EventSource genforbinder automatisk, og workeren frigives.
+$maxRuntime = 300;
+$started    = time();
+
+// Prepare ÉN gang (før: ny statement hvert 2. sekund, aldrig lukket)
+$stmt = $mysqli->prepare("SELECT id, latitude, longitude, observed_at, azimuth, elevation FROM observations WHERE id > ? ORDER BY id ASC LIMIT 500");
+
+echo "retry: 3000\n\n";
+
+while (time() - $started < $maxRuntime) {
     if (connection_aborted()) {
         $mysqli->close();
         exit();
     }
 
     // Hent observationer med et ID, der er HØJERE end det sidst sendte
-    $stmt = $mysqli->prepare("SELECT id, latitude, longitude, observed_at, azimuth, elevation FROM observations WHERE id > ? ORDER BY id ASC");
     $stmt->bind_param("s", $lastId); // 's' for streng, da ID'et er et stort tal
     $stmt->execute();
     $new_observations_result = $stmt->get_result();
     
     $new_observations = $new_observations_result->fetch_all(MYSQLI_ASSOC);
+    $new_observations_result->free();
 
     if (count($new_observations) > 0) {
         foreach ($new_observations as $obs) {
@@ -51,4 +60,7 @@ while (true) {
     // Vent 2 sekunder før næste tjek
     sleep(2);
 }
+
+$stmt->close();
+$mysqli->close();
 ?>

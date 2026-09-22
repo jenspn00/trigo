@@ -171,6 +171,21 @@
         const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
         const textDecoder = new TextDecoder('utf-8');
 
+        // Session-id: samme nøgle som index.html, så dashboardet kan
+        // skelne observatører. Uden det blev hver gun-pejling sin egen
+        // "bruger", og to pejlinger fra samme gun blev krydset.
+        const SESSION_ID = (() => {
+            let s = null;
+            try { s = localStorage.getItem('trigo_session_id'); } catch (e) {}
+            if (!s || !/^[a-zA-Z0-9\-_]{6,40}$/.test(s)) {
+                const buf = new Uint8Array(8);
+                crypto.getRandomValues(buf);
+                s = 'g-' + Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+                try { localStorage.setItem('trigo_session_id', s); } catch (e) {}
+            }
+            return s;
+        })();
+
         // --- Hjælpefunktioner ---
         function showLog(message, type = 'success', duration = 1500) {
             logDiv.className = type;
@@ -333,11 +348,12 @@
             try {
                 const jsonString = textDecoder.decode(event.target.value);
                 const data = JSON.parse(jsonString);
-                currentAzimuth = data.azimuth;
-                currentElevation = data.elevation;
+                if (!Number.isFinite(data.azimuth)) return;
+                currentAzimuth = ((data.azimuth % 360) + 360) % 360;
+                currentElevation = Number.isFinite(data.elevation) ? data.elevation : null;
 
                 azimutDisplay.textContent = Math.round(currentAzimuth);
-                elevationDisplay.textContent = Math.round(currentElevation);
+                elevationDisplay.textContent = currentElevation !== null ? Math.round(currentElevation) : '--';
 
                 // Auto-send (hvis GPS klar)
                 const now = Date.now();
@@ -345,6 +361,7 @@
                     lastSendTime = now;
                     const record = {
                         id: now,
+                        session_id: SESSION_ID,
                         timestamp: new Date(now).toISOString(),
                         position: { 
                             latitude: currentPosition.latitude, 

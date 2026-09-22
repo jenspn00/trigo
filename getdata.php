@@ -1,6 +1,18 @@
 <?php
-// Modtag den rå POST-data (som er JSON-strengen)
-$json_data = file_get_contents('php://input');
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo "Fejl: Kun POST.";
+    exit;
+}
+
+// Modtag den rå POST-data (som er JSON-strengen). Loftet på 8 KB
+// forhindrer at nogen fylder disken via sensor_data_log.txt.
+$json_data = file_get_contents('php://input', false, null, 0, 8193);
+if (strlen($json_data) > 8192) {
+    http_response_code(413);
+    echo "Fejl: For meget data.";
+    exit;
+}
 
 // Tjek om data er modtaget
 if (empty($json_data)) {
@@ -26,7 +38,8 @@ if (is_null($data)) {
 // For test: Gem de modtagne data i en tekstfil
 // 'FILE_APPEND' tilføjer til filen i stedet for at overskrive
 // 'LOCK_EX' forhindrer andre i at skrive til filen på samme tid
-$log_entry = date('Y-m-d H:i:s') . " - Data modtaget: " . $json_data . PHP_EOL;
+// json_encode igen → én linje pr. post (ingen indlejrede linjeskift)
+$log_entry = date('Y-m-d H:i:s') . " - Data modtaget: " . json_encode($data) . PHP_EOL;
 file_put_contents('sensor_data_log.txt', $log_entry, FILE_APPEND | LOCK_EX);
 
 // Send et "OK" svar tilbage til ESP8266

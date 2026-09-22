@@ -83,8 +83,10 @@ when you ship a version that changes deployed files or DB schema).
      doesn't propagate to the other.
 
 4. **PWA/offline** — `sw.js` uses network-first for HTML navigations (so deploys show up
-   immediately on phones) and cache-first for everything else. Bumping the cache version
-   (`CACHE_NAME`) is how you force clients to pick up non-HTML asset changes.
+   immediately on phones) and cache-first for other same-origin static assets. `.php` endpoints
+   and cross-origin requests (tiles, CDN, Nominatim) bypass the SW entirely — never let live
+   data endpoints fall into the cache-first path. Bumping the cache version (`CACHE_NAME`) is
+   how you force clients to pick up non-HTML asset changes.
 
 ### Endpoint responsibility map
 
@@ -111,3 +113,9 @@ when you ship a version that changes deployed files or DB schema).
   (e.g. `address`, `session_id`) to stay compatible with databases that haven't been migrated yet.
   Follow that defensive pattern for any new optional column.
 - `client session_id` is the trust boundary for "is this the same observer" — there's no auth.
+- Time windows must be computed in PHP (`date()`), not MySQL `NOW()`: `observed_at` is written
+  with PHP's timezone, which may differ from MySQL's. `fetch_log.php` also returns
+  `observed_ms` (epoch) so browsers never parse the `DATETIME` string themselves (Safari can't).
+- Anything from the DB rendered via `innerHTML` in `dashboard.html` must go through `esc()`.
+- `simulator.php` is gated by an optional `SIMULATOR_KEY` constant in `db_config.php`
+  (`simulator.php?key=...`).

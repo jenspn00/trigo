@@ -8,6 +8,15 @@
 //  ALLE krydsninger (alle var 'unknown').
 //
 //  Denne version læser direkte fra databasen.
+//
+//  v3:
+//    • Tidsgrænsen beregnes i PHP (ikke MySQL NOW()), fordi
+//      save_data.php skriver observed_at med PHP's date(). Er
+//      MySQL- og PHP-tidszonen forskellige, blev vinduet ellers
+//      forskudt med flere timer og dashboardet så intet.
+//    • Hver række får 'observed_ms' (epoch-ms), så browseren ikke
+//      selv skal parse "YYYY-MM-DD HH:MM:SS" — Safari kan ikke,
+//      og andre browsere antager deres egen lokale tidszone.
 // =================================================================
 
 header('Content-Type: application/json; charset=utf-8');
@@ -33,14 +42,15 @@ try {
     $cols = "id, session_id, observed_at, latitude, longitude, altitude, azimuth, elevation"
           . ($hasAddress ? ", address" : "");
 
+    $cutoff = date('Y-m-d H:i:s', time() - $minutes * 60);
     $stmt = $mysqli->prepare(
         "SELECT $cols
            FROM observations
-          WHERE observed_at >= (NOW() - INTERVAL ? MINUTE)
+          WHERE observed_at >= ?
           ORDER BY observed_at DESC
-          LIMIT 500"
+          LIMIT 1000"
     );
-    $stmt->bind_param("i", $minutes);
+    $stmt->bind_param("s", $cutoff);
     $stmt->execute();
     $res = $stmt->get_result();
     $rows = $res->fetch_all(MYSQLI_ASSOC);
@@ -54,6 +64,8 @@ try {
         $r['elevation'] = isset($r['elevation']) ? (float)$r['elevation'] : 0.0;
         // Bagudkompatibelt felt: dashboardet brugte 'elevation_angle' før
         $r['elevation_angle'] = $r['elevation'];
+        $ts = strtotime($r['observed_at']);
+        $r['observed_ms'] = $ts !== false ? $ts * 1000 : null;
     }
     unset($r);
 

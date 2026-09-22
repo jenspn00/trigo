@@ -1,6 +1,17 @@
 <?php
 // =================================================================
-//  save_data.php  (v3)
+//  save_data.php  (v5)
+//
+//  Rettelser ift. v4:
+//    1. Azimut normaliseres til [0, 360) i stedet for at afvise
+//       360 (telefonens afrunding gav 360 → "Ugyldig azimuth").
+//    2. Klient-id saniteres (kun cifre) — undgår stored XSS på
+//       dashboardet og ugyldige primærnøgler.
+//    3. Adresse genbruges fra samme session hvis observatøren
+//       ikke har flyttet sig (>100 m) — skåner Nominatim, som
+//       ellers blev kaldt for hver batch/hvert gun-skud.
+//    4. Baggrundsjobbet er pakket i try/catch (mysqli kaster
+//       exceptions i PHP 8.1+, fx hvis address-kolonnen mangler).
 //
 //  Rettelser ift. v2:
 //    1. ob_start() ØVERST → "headers already sent"-warnings væk.
@@ -29,6 +40,7 @@ $bg_lon   = null;
 $bg_id    = null;
 $bg_azi   = null;
 $bg_elev  = null;
+$bg_sess  = null;
 
 // ----------------------------------------------------------
 //  Hjælpere
@@ -70,6 +82,16 @@ function cleanSessionId($session_id) {
     return substr($session_id, 0, 40);
 }
 
+// Klient-id skal være rent numerisk (monotont id fra klienten).
+// Alt andet erstattes af et server-genereret id.
+function cleanObsId($id, int $seq): string {
+    $id = is_scalar($id) ? (string)$id : '';
+    if (!preg_match('/^[0-9]{1,19}$/', $id)) {
+        $id = (string)(round(microtime(true) * 10000) + $seq);
+    }
+    return $id;
+}
+
 // Validér og normalisér én observation → array klar til insert.
 // Kaster Exception ved ugyldige data.
 function normalizeRecord(array $data, ?string $fallbackSession, int $seq): array {
@@ -93,11 +115,17 @@ function normalizeRecord(array $data, ?string $fallbackSession, int $seq): array
 
     if ($lat < -90  || $lat > 90)        throw new Exception("Ugyldig latitude: $lat");
     if ($lon < -180 || $lon > 180)       throw new Exception("Ugyldig longitude: $lon");
-    if ($azimuth < 0 || $azimuth >= 360) throw new Exception("Ugyldig azimuth: $azimuth");
+    foreach (['latitude' => $lat, 'longitude' => $lon, 'azimuth' => $azimuth,
+              'elevation' => $elevation, 'altitude' => $alt] as $name => $v) {
+        if (!is_finite($v)) throw new Exception("Ugyldig $name");
+    }
+    // Kompasværdier kan komme som 360 (afrunding) eller negative —
+    // det er gyldige retninger, så de foldes ind i [0, 360).
+    $azimuth = fmod(fmod($azimuth, 360) + 360, 360);
     if ($elevation < -90 || $elevation > 90) throw new Exception("Ugyldig elevation: $elevation");
 
-    $id = (string) pickField($data, ['id'], (string)(round(microtime(true) * 10000) + $seq));
-    if (isset($data['timestamp'])) {
+    $id = cleanObsId(pickField($data, ['id']), $seq);
+    if (isset($data['timestamp']) && is_string($data['timestamp'])) {
         $ts = strtotime($data['timestamp']);
         $timestamp = $ts ? date('Y-m-d H:i:s', $ts) : date('Y-m-d H:i:s');
     } else {
@@ -177,8 +205,12 @@ try {
     $bg_id    = $first['id'];
     $bg_azi   = $first['azimuth'];
     $bg_elev  = $first['elevation'];
+    $bg_sess  = $first['session_id'];
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
+    // Throwable: fanger også TypeError (fx timestamp sendt som array),
+    // så klienten altid får et JSON-svar.
+    http_response_code(400);
     $response = ['status' => 'error', 'message' => $e->getMessage()];
     error_log('save_data.php: ' . $e->getMessage());
 }
@@ -208,7 +240,36 @@ if (function_exists('fastcgi_finish_request')) {
 //  Baggrundsjob: reverse-geocoding + tekstlog (failsafe)
 // ----------------------------------------------------------
 if ($bg_ok) {
-    $address    = getAddressFromCoords($bg_lat, $bg_lon);
+    $dbOk = isset($mysqli) && $mysqli && !$mysqli->connect_error;
+
+    // Genbrug seneste adresse fra samme session, hvis observatøren
+    // står (næsten) samme sted. Track-mode og gun.html sender
+    // hvert sekund — uden dette ramte vi Nominatims grænse (1 req/s).
+    $address = null;
+    if ($dbOk && $bg_sess !== null) {
+        try {
+            require_once 'helpers.php';
+            $prev = $mysqli->prepare(
+                "SELECT address, latitude, longitude FROM observations
+                  WHERE session_id = ? AND address IS NOT NULL
+                    AND address <> 'Adresse kunne ikke findes'
+                  ORDER BY observed_at DESC LIMIT 1");
+            $prev->bind_param("s", $bg_sess);
+            $prev->execute();
+            $row = $prev->get_result()->fetch_assoc();
+            $prev->close();
+            if ($row && beregnAfstand($bg_lat, $bg_lon,
+                    (float)$row['latitude'], (float)$row['longitude']) < 100) {
+                $address = $row['address'];
+            }
+        } catch (Throwable $e) {
+            // fx address-kolonnen mangler (migration ikke kørt) — ignorér
+        }
+    }
+    if ($address === null) {
+        $address = getAddressFromCoords($bg_lat, $bg_lon);
+    }
+
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $log_time   = date('Y-m-d H:i:s');
 
@@ -221,20 +282,22 @@ if ($bg_ok) {
         round($bg_elev),
         $address
     );
-    file_put_contents('observation_log.txt', $logEntry, FILE_APPEND | LOCK_EX);
+    @file_put_contents('observation_log.txt', $logEntry, FILE_APPEND | LOCK_EX);
 
     // Gem også adressen i databasen — så fetch_log.php kan returnere
     // den uden et nyt opslag. Ved batch (track-mode) er alle
     // observationer fra samme sted → samme adresse på alle rækker,
     // med ét enkelt Nominatim-opslag.
-    if (isset($mysqli) && $mysqli && !$mysqli->connect_error && count($saved_ids) > 0) {
-        $upd = $mysqli->prepare("UPDATE observations SET address = ? WHERE id = ?");
-        if ($upd) {
+    if ($dbOk && count($saved_ids) > 0) {
+        try {
+            $upd = $mysqli->prepare("UPDATE observations SET address = ? WHERE id = ?");
             foreach ($saved_ids as $sid) {
                 $upd->bind_param("ss", $address, $sid);
-                @$upd->execute();
+                $upd->execute();
             }
             $upd->close();
+        } catch (Throwable $e) {
+            error_log('save_data.php (adresse): ' . $e->getMessage());
         }
     }
 }

@@ -259,7 +259,20 @@
 
     <script>
         // ============================================================
-        //  TRIGO DASHBOARD — v4
+        //  TRIGO DASHBOARD — v5
+        //
+        //  NYT i v5:
+        //    • Rå parvise krydsninger parres nu kun med den tidsmæssigt
+        //      nærmeste pejling fra hver anden session (og maks.
+        //      MAX_RAW_TARGETS tegnes). I track-mode gav "alle par
+        //      inden for tidsvinduet" titusindvis af markører og
+        //      frøs browseren.
+        //    • Tider læses fra serverens observed_ms (epoch) — Safari
+        //      kunne ikke parse "YYYY-MM-DD HH:MM:SS" (alle tider NaN).
+        //    • Tidsvinduet styrer også hvor meget der hentes, og en
+        //      ændring slår igennem med det samme.
+        //    • Tekst fra serveren (id, session, adresse) HTML-escapes.
+        //    • Nominatim-opslag køres i én kø med fælles rate limit.
         //
         //  NYT i v4:
         //    • LSQ-fusion: alle pejlinger samles i 5-sek tidsbins og
@@ -289,6 +302,26 @@
         const USER_COLORS = ['#58a6ff','#f0883e','#bc8cff','#3fb950','#f85149','#d29922','#79c0ff','#ff7b72'];
         const FETCH_INTERVAL = 3000;
         const DEFAULT_TIME_WINDOW = 120;
+        const MAX_RAW_TARGETS = 200;     // maks. antal rå krydsninger der tegnes
+
+        // Tekst fra serveren indsættes i innerHTML/popups — escape altid.
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        // observed_ms (epoch fra serveren) foretrækkes. Fallback: gør
+        // "YYYY-MM-DD HH:MM:SS" ISO-agtig, så også Safari kan parse den.
+        function parseObsTime(o) {
+            if (o.observed_ms != null) return Number(o.observed_ms);
+            return new Date(String(o.observed_at || '').replace(' ', 'T')).getTime();
+        }
+
+        function getTimeWindow() {
+            const v = parseInt(document.getElementById('time-window').value);
+            return (v > 0 ? v : DEFAULT_TIME_WINDOW);
+        }
 
         const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([55.47, 8.45], 13);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -640,7 +673,9 @@
         // --- DATA-HENTNING ---
         async function updateDashboard() {
             try {
-                const response = await fetch('fetch_log.php');
+                // Hent mindst 5 min, men altid nok til hele tidsvinduet
+                const minutes = Math.max(5, Math.ceil(getTimeWindow() / 60));
+                const response = await fetch(`fetch_log.php?minutes=${minutes}`, { cache: 'no-store' });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
 
@@ -652,12 +687,17 @@
                 lastDataHash = currentHash;
 
                 const obs = data.latest_observations || [];
-                const timeWindow = parseInt(document.getElementById('time-window').value) || DEFAULT_TIME_WINDOW;
-                processData(obs, timeWindow);
+                processData(obs, getTimeWindow());
             } catch (e) {
                 console.error("Fejl ved hentning:", e);
             }
         }
+
+        // Nyt tidsvindue → hent og tegn igen med det samme
+        document.getElementById('time-window').addEventListener('change', () => {
+            lastDataHash = "";
+            updateDashboard();
+        });
 
         // Mark connection stale after 2× interval
         setInterval(() => {
@@ -680,7 +720,7 @@
                 const lat  = parseFloat(o.latitude);
                 const lon  = parseFloat(o.longitude);
                 const azi  = parseFloat(o.azimuth);
-                const time = new Date(o.observed_at).getTime();
+                const time = parseObsTime(o);
                 // VIGTIGT: brug session_id som primær identifikator.
                 // Fald tilbage til row-id kun hvis session_id er NULL —
                 // det gør hver gammel række til "sin egen bruger" i
@@ -691,6 +731,7 @@
                 const color  = getUserColor(userId);
                 const address = o.address || null;
 
+                if (isNaN(lat) || isNaN(lon) || isNaN(azi)) return;
                 uniqueUsers.add(userId);
                 points.push({ lat, lon, azi, time, userId, elev, obsAlt, color, id: o.id, address });
 
@@ -705,7 +746,7 @@
                     radius: 5, color, fillColor: color, fillOpacity: 0.8, weight: 2
                 }).bindPopup(`
                     <span class="popup-title observer">Observatør</span>
-                    <span class="popup-detail">Session: <span class="val">${userId}</span></span>
+                    <span class="popup-detail">Session: <span class="val">${esc(userId)}</span></span>
                     <span class="popup-detail">Retning: <span class="val">${Math.round(azi)}°</span></span>
                     <span class="popup-detail">Elevation: <span class="val">${Math.round(elev)}°</span></span>
                     <span class="popup-detail">Tid: <span class="val">${new Date(time).toLocaleTimeString('da-DK')}</span></span>
@@ -713,50 +754,84 @@
             });
 
             // 2. Find krydsninger
-            const targets = [];
-            for (let i = 0; i < points.length; i++) {
-                for (let j = i + 1; j < points.length; j++) {
-                    const p1 = points[i], p2 = points[j];
-                    if (Math.abs(p1.time - p2.time) > timeWindowSec * 1000) continue;
-                    if (p1.userId === p2.userId) continue;
+            //    Hver pejling parres kun med den tidsmæssigt nærmeste
+            //    pejling fra hver af de andre sessioner (inden for
+            //    tidsvinduet). Det holder antallet lineært i stedet for
+            //    kvadratisk — vigtigt i track-mode (~1 pejling/sek).
+            const bySession = new Map();
+            points.forEach((p, idx) => {
+                if (isNaN(p.time)) return;
+                p.idx = idx;
+                if (!bySession.has(p.userId)) bySession.set(p.userId, []);
+                bySession.get(p.userId).push(p);
+            });
+            for (const arr of bySession.values()) arr.sort((a, b) => a.time - b.time);
 
-                    const ix = findIntersection(
-                        { lat: p1.lat, lon: p1.lon }, p1.azi,
-                        { lat: p2.lat, lon: p2.lon }, p2.azi
-                    );
-                    if (!ix) continue;
+            const nearestInTime = (arr, t) => {
+                let lo = 0, hi = arr.length - 1;
+                while (lo < hi) {
+                    const mid = (lo + hi) >> 1;
+                    if (arr[mid].time < t) lo = mid + 1; else hi = mid;
+                }
+                let best = arr[lo];
+                if (lo > 0 && Math.abs(arr[lo - 1].time - t) < Math.abs(best.time - t)) best = arr[lo - 1];
+                return best;
+            };
 
-                    // Rimelighedstjek: krydsning ikke mere end 100 km væk
-                    const dist = Math.sqrt(
-                        Math.pow((ix.lat - p1.lat) * 111000, 2) +
-                        Math.pow((ix.lon - p1.lon) * 111000 * Math.cos(p1.lat * Math.PI/180), 2)
-                    );
-                    if (dist > 100000) continue;
-
-                    // Højde-estimat fra elevation_angle.
-                    // h_i = obsAlt_i + dist_i * tan(elev_i)
-                    let height = null;
-                    if (!isNaN(p1.elev) && !isNaN(p2.elev) && Math.abs(p1.elev) < 89 && Math.abs(p2.elev) < 89) {
-                        const h1 = p1.obsAlt + ix.dist1 * Math.tan(p1.elev * Math.PI / 180);
-                        const h2 = p2.obsAlt + ix.dist2 * Math.tan(p2.elev * Math.PI / 180);
-                        height = (h1 + h2) / 2;
-                        // Hvis de to estimater divergerer voldsomt, er det
-                        // sandsynligvis støj — skjul tallet.
-                        if (Math.abs(h1 - h2) > Math.max(50, 0.3 * Math.max(Math.abs(h1), Math.abs(h2)))) {
-                            height = null;
-                        }
+            const pairs = new Map();
+            for (const [sA, arrA] of bySession) {
+                for (const [sB, arrB] of bySession) {
+                    if (sA === sB) continue;
+                    for (const p1 of arrA) {
+                        const p2 = nearestInTime(arrB, p1.time);
+                        if (!p2 || Math.abs(p1.time - p2.time) > timeWindowSec * 1000) continue;
+                        const [a, b] = p1.idx < p2.idx ? [p1, p2] : [p2, p1];
+                        pairs.set(a.idx + '|' + b.idx, [a, b]);
                     }
-
-                    targets.push({
-                        lat: ix.lat, lon: ix.lon,
-                        angle: ix.angle,
-                        quality: getQuality(ix.angle),
-                        time: (p1.time + p2.time) / 2,
-                        height,
-                        obs: [p1, p2]
-                    });
                 }
             }
+
+            let targets = [];
+            for (const [p1, p2] of pairs.values()) {
+                const ix = findIntersection(
+                    { lat: p1.lat, lon: p1.lon }, p1.azi,
+                    { lat: p2.lat, lon: p2.lon }, p2.azi
+                );
+                if (!ix) continue;
+
+                // Rimelighedstjek: krydsning ikke mere end 100 km væk
+                const dist = Math.sqrt(
+                    Math.pow((ix.lat - p1.lat) * 111000, 2) +
+                    Math.pow((ix.lon - p1.lon) * 111000 * Math.cos(p1.lat * Math.PI/180), 2)
+                );
+                if (dist > 100000) continue;
+
+                // Højde-estimat fra elevation_angle.
+                // h_i = obsAlt_i + dist_i * tan(elev_i)
+                let height = null;
+                if (!isNaN(p1.elev) && !isNaN(p2.elev) && Math.abs(p1.elev) < 89 && Math.abs(p2.elev) < 89) {
+                    const h1 = p1.obsAlt + ix.dist1 * Math.tan(p1.elev * Math.PI / 180);
+                    const h2 = p2.obsAlt + ix.dist2 * Math.tan(p2.elev * Math.PI / 180);
+                    height = (h1 + h2) / 2;
+                    // Hvis de to estimater divergerer voldsomt, er det
+                    // sandsynligvis støj — skjul tallet.
+                    if (Math.abs(h1 - h2) > Math.max(50, 0.3 * Math.max(Math.abs(h1), Math.abs(h2)))) {
+                        height = null;
+                    }
+                }
+
+                targets.push({
+                    lat: ix.lat, lon: ix.lon,
+                    angle: ix.angle,
+                    quality: getQuality(ix.angle),
+                    time: (p1.time + p2.time) / 2,
+                    height,
+                    obs: [p1, p2]
+                });
+            }
+            // Kun de nyeste krydsninger tegnes
+            const totalTargets = targets.length;
+            targets = targets.sort((a, b) => b.time - a.time).slice(0, MAX_RAW_TARGETS);
 
             // 3. Tegn krydsninger
             const addrQueue = [];
@@ -776,7 +851,7 @@
 
                 // Brug allerede-cachet adresse fra DB hvis muligt
                 const cachedAddr = t.obs[0].address || t.obs[1].address;
-                const initialAddr = cachedAddr ? `<i>(nærmeste observatør:</i> ${cachedAddr})` : 'Henter adresse...';
+                const initialAddr = cachedAddr ? `<i>(nærmeste observatør:</i> ${esc(cachedAddr)})` : 'Henter adresse...';
 
                 L.circleMarker([t.lat, t.lon], {
                     radius: 8, color: '#f85149', fillColor: '#f85149',
@@ -810,7 +885,7 @@
             renderEstimate(fixes, track);
 
             // 5. Sidebar
-            updateStats(observations.length, targets.length, uniqueUsers.size);
+            updateStats(points.length, totalTargets, uniqueUsers.size);
             updateObservationsList(points);
             updateTargetsList(targets, addrQueue);
 
@@ -917,7 +992,7 @@
                             <span class="obs-user-dot" style="background:${p.color}"></span>
                             ${timeStr}
                         </span>
-                        <span class="obs-id">#${p.id || '?'}</span>
+                        <span class="obs-id">#${esc(p.id || '?')}</span>
                     </div>
                     <div class="obs-body">
                         <span class="obs-coords">${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</span>
@@ -946,7 +1021,7 @@
                 div.className = 'target-item';
                 const sideId = `sidebar-addr-${idx}`;
                 const cachedAddr = t.obs[0].address || t.obs[1].address;
-                const initialAddr = cachedAddr || 'Henter adresse...';
+                const initialAddr = cachedAddr ? esc(cachedAddr) : 'Henter adresse...';
                 const heightStr = t.height != null ? ` &mdash; ${Math.round(t.height)} m højde` : '';
 
                 div.innerHTML = `
@@ -966,15 +1041,27 @@
         }
 
         // --- ADRESSE-KØ (Nominatim fallback) ---
+        // Kun én kø kører ad gangen: en ny rendering afløser den
+        // gamle (hvis elementer alligevel er væk fra DOM'en), og alle
+        // opslag deler samme rate limit (Nominatim: maks. 1 req/s).
         const addressCache = {};
+        const NOMINATIM_GAP_MS = 1500;
+        let addrGeneration = 0;
+        let lastNominatimCall = 0;
         async function processAddressQueue(queue) {
+            const gen = ++addrGeneration;
             for (const item of queue) {
+                if (gen !== addrGeneration) return;          // afløst af nyere rendering
                 const key = `${item.lat.toFixed(4)},${item.lon.toFixed(4)}`;
                 if (addressCache[key]) {
                     const el = document.getElementById(item.id);
                     if (el) el.textContent = addressCache[key];
                     continue;
                 }
+                const wait = lastNominatimCall + NOMINATIM_GAP_MS - Date.now();
+                if (wait > 0) await new Promise(r => setTimeout(r, wait));
+                if (gen !== addrGeneration) return;
+                lastNominatimCall = Date.now();
                 try {
                     const url = `https://nominatim.openstreetmap.org/reverse?format=json`
                               + `&lat=${item.lat}&lon=${item.lon}&zoom=18&addressdetails=1&accept-language=da`;
@@ -994,7 +1081,6 @@
                 } catch (e) {
                     console.warn("Adressefejl:", e);
                 }
-                await new Promise(r => setTimeout(r, 1500));   // Nominatim rate limit
             }
         }
 

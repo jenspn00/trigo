@@ -602,7 +602,8 @@
                 smoothedHeading += SMOOTHING * diff;
                 smoothedHeading = ((smoothedHeading % 360) + 360) % 360;
             }
-            return Math.round(smoothedHeading);
+            // % 360: 359,6° må ikke afrundes til 360 (serveren kræver 0–359)
+            return Math.round(smoothedHeading) % 360;
         }
 
         // ===== START =====
@@ -1156,7 +1157,7 @@
 
                     const v = event.target.value;
                     currentPitch   = Math.round(v.getFloat32(0, true));
-                    currentHeading = Math.round(v.getFloat32(4, true));
+                    currentHeading = ((Math.round(v.getFloat32(4, true)) % 360) + 360) % 360;
                     updateSensorDisplay();
                 });
             } catch (err) {
@@ -1176,14 +1177,27 @@
         }
 
         // ===== CLEANUP =====
-        window.addEventListener('beforeunload', () => {
-            if (videoStream) videoStream.getTracks().forEach(t => t.stop());
-            // Flush evt. usendte track-observationer
+        // Flush evt. usendte track-observationer. 'beforeunload' fyrer
+        // sjældent på mobil (især iOS), så vi flusher også når siden
+        // skjules (app-skift, skærmlås) og ved 'pagehide'.
+        function flushTrackBuffer() {
             if (trackBuffer.length && navigator.sendBeacon) {
                 const payload = JSON.stringify({ session_id: SESSION_ID, observations: trackBuffer });
-                navigator.sendBeacon('save_data.php', new Blob([payload], { type: 'application/json' }));
-                trackBuffer = [];
+                if (navigator.sendBeacon('save_data.php', new Blob([payload], { type: 'application/json' }))) {
+                    sessionObsCount += trackBuffer.length;
+                    obsCountEl.textContent = sessionObsCount;
+                    trackBuffer = [];
+                }
             }
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') flushTrackBuffer();
+        });
+        window.addEventListener('pagehide', e => {
+            flushTrackBuffer();
+            // Siden kan komme tilbage fra bfcache — stop kun kameraet
+            // når den faktisk forlades.
+            if (!e.persisted && videoStream) videoStream.getTracks().forEach(t => t.stop());
         });
 
         // ===== SERVICE WORKER =====

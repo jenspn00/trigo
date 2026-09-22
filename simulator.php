@@ -17,6 +17,17 @@ error_reporting(E_ALL);
 require_once 'db_config.php';
 require_once 'helpers.php';
 
+// Simulatoren skriver direkte i produktions-tabellen. Er
+// SIMULATOR_KEY defineret i db_config.php, kræves ?key=<nøgle>,
+// så fremmede ikke kan fylde databasen med falske flyvninger.
+if (defined('SIMULATOR_KEY') && SIMULATOR_KEY !== ''
+    && !hash_equals((string)SIMULATOR_KEY, (string)($_GET['key'] ?? ''))) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Adgang naegtet: simulator.php?key=... kraeves (se SIMULATOR_KEY i db_config.php).\n";
+    exit;
+}
+
 function lerp(float $a, float $b, float $t): float { return $a + ($b - $a) * $t; }
 
 $out      = []; // alle output-linjer samles her
@@ -157,12 +168,14 @@ $out[] = "PHP gmdate():       " . gmdate('Y-m-d H:i:s');
 $out[] = "PHP date_default_timezone: " . date_default_timezone_get();
 $out[] = "";
 
+// Samme PHP-beregnede tidsgrænse som fetch_log.php
+$cutoff = $mysqli->real_escape_string(date('Y-m-d H:i:s', time() - 5 * 60));
 $row = $mysqli->query(
     "SELECT COUNT(*) AS c,
             MIN(observed_at) AS first_obs,
             MAX(observed_at) AS last_obs
        FROM observations
-      WHERE observed_at >= (NOW() - INTERVAL 5 MINUTE)"
+      WHERE observed_at >= '$cutoff'"
 )->fetch_assoc();
 $out[] = "--- Det fetch_log.php henter (seneste 5 min) ---";
 $out[] = "Rakker:  " . $row['c'];
@@ -174,7 +187,7 @@ if ($hasSession && (int)$row['c'] > 0) {
     $sample = $mysqli->query(
         "SELECT id, session_id, observed_at, latitude, longitude, azimuth, elevation
            FROM observations
-          WHERE observed_at >= (NOW() - INTERVAL 5 MINUTE)
+          WHERE observed_at >= '$cutoff'
           ORDER BY observed_at DESC LIMIT 9"
     );
     $out[] = "--- Sample (DESC) ---";

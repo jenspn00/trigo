@@ -22,4 +22,8 @@ if ($mysqli->connect_error) {
 }
 
 $mysqli->set_charset('utf8mb4');
+
+// Valgfrit: beskyt simulator.php (kaldes så som simulator.php?key=...).
+// Lad den være tom for at slå beskyttelsen fra.
+define('SIMULATOR_KEY', '');
 ?>

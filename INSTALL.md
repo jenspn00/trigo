@@ -1,3 +1,64 @@
+# Trigo — opdatering (v5): Robusthed, sikkerhed og ydeevne
+
+Ingen database-ændringer. Ingen ændring af estimatoren (LSQ/track-fit).
+
+## Filer der skal uploades (overskriv)
+
+- `.htaccess` — blokerer direkte adgang til logfiler, `.sql`, `.md`,
+  `db_config*.php` og `.git`. **Vigtigt:** `observation_log.txt`
+  indeholder IP-adresser + positioner og kunne før hentes af alle.
+- `save_data.php` — v5 (se nedenfor)
+- `fetch_log.php` — tidszone-robust tidsvindue + `observed_ms`
+- `dashboard.html` — v5
+- `index.html`, `gun.html`, `sw.js` (cache v5)
+- `simulator.php`, `sse_stream.php`, `getdata.php`
+
+Tilføj evt. `define('SIMULATOR_KEY', '...');` i `db_config.php` — så
+kræver `simulator.php` et `?key=...`, og fremmede kan ikke fylde
+databasen med falske flyvninger. Uden konstanten virker den som før.
+
+## Rettede fejl
+
+- **Kompas 360° afvist:** telefonens afrunding kunne give 360°, som
+  `save_data.php` afviste ("Ugyldig azimuth") — observationen gik tabt.
+  Nu foldes azimut ind i [0, 360) på både klient og server.
+- **gun.html sendte ingen `session_id`:** hver gun-pejling blev sin egen
+  "bruger", så to pejlinger fra samme gun blev krydset med hinanden.
+  Bruger nu samme `trigo_session_id` som `index.html`.
+- **Dashboard én poll bagud:** service workeren cachede `fetch_log.php`
+  (cache-first). PHP og andre domæner (tiles, CDN, Nominatim) går nu
+  udenom SW-cachen, som heller ikke længere vokser med hver kort-tile.
+- **Tidszone-forskydning:** `fetch_log.php` sammenlignede PHP-skrevne
+  tider med MySQL `NOW()`. Er de to tidszoner forskellige, var vinduet
+  forskudt med timer. Grænsen beregnes nu i PHP.
+- **Safari:** kunne ikke parse `"YYYY-MM-DD HH:MM:SS"` → alle tider NaN.
+  Dashboardet bruger nu `observed_ms` fra serveren.
+- **Track-mode frøs dashboardet:** alle par inden for tidsvinduet gav
+  titusindvis af rå krydsninger. Nu parres hver pejling kun med den
+  tidsmæssigt nærmeste fra hver anden session, og maks. 200 tegnes.
+  (900 pejlinger: før fryser siden, nu ~1 s.)
+- **Tidsvinduet** styrer nu også hvor meget der hentes (før altid 5 min),
+  og en ændring slår igennem med det samme.
+- **Stored XSS:** klient-id og adresser blev indsat rå i dashboardets
+  HTML. Id skal nu være numerisk (ellers genereres det på serveren), og
+  al servertekst escapes.
+- **Nominatim-belastning:** adressen genbruges fra samme session, når
+  observatøren står inden for 100 m af sidste opslag. Dashboardets
+  adresse-kø kører nu som én kø med fælles rate limit.
+- **Mistede track-data på mobil:** `beforeunload` fyrer sjældent på
+  mobil. Bufferen flushes nu også ved `visibilitychange`/`pagehide`.
+- `sse_stream.php` lavede en ny prepared statement hvert 2. sek og
+  holdt en PHP-worker for evigt; nu én statement og maks. 5 min pr.
+  forbindelse (EventSource genforbinder selv).
+- `getdata.php` accepterer kun POST ≤ 8 KB (disken kunne fyldes).
+
+## Test efter upload
+
+Som for v4 (simulator → dashboard, ~253 km/t, kurs ~54° NØ). Tjek
+desuden at `https://<domæne>/observation_log.txt` giver 403.
+
+---
+
 # Trigo — opdatering (v4): Track-mode + rigtig track-estimering
 
 Denne version er "den anden chance": den ændrer projektets fysik fra
