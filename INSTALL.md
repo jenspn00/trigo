@@ -1,3 +1,76 @@
+# Trigo — opdatering (v5): Flere samtidige objekter (tilvalg)
+
+Den kendte begrænsning fra v4 er nu adresseret: estimatoren antog ét
+objekt ad gangen, og to objekter i luften gav ét forvirret fix midt
+imellem dem.
+
+**Standard er uændret.** Der er kommet et afkrydsningsfelt "Flere
+samtidige objekter" under tidsvinduet i dashboardet. Er det slået fra —
+og det er det som udgangspunkt — kører nøjagtig samme kode som før.
+Valget huskes pr. browser.
+
+## Filer der skal uploades (overskriv)
+
+- `dashboard.html`
+
+Ingen database-ændringer. Ingen `sw.js`-bump.
+
+## Det viste sig at være to problemer, ikke ét
+
+Noten i v4 foreslog spatial clustering af pejlinger pr. bin. Det er kun
+halvdelen: selv med perfekte klynger fitter `fitTrack` stadig én ret
+linje gennem begge objekters fixes. Der skal også en **kobling på tværs
+af bins**, så fixene fordeles på hvert sit spor, før der fittes. Begge
+dele er bygget.
+
+Dashboardet tegner nu ét farvet spor og ét track-kort pr. objekt.
+
+## Spøgelsesmål — læs dette før du stoler på tilstanden
+
+Ser observatør 1 på objekt A og observatør 3 på objekt B, så skærer
+deres pejlelinjer også hinanden — i et punkt hvor der ikke er noget.
+Det er et **spøgelsesmål**, og geometrisk er det lige så troværdigt som
+et ægte: to linjer skærer altid hinanden i præcis ét punkt, så
+residualet er nul i begge tilfælde.
+
+Med to observatører pr. objekt er det **matematisk ikke til at skelne**
+ud fra geometri alene. To ting dæmper det — højde-uenighed mellem
+elevationsvinklerne, og at et ægte mål set af tre observatører bæres af
+tre skæringspar mod spøgelsets to — men de fjerner det ikke.
+
+I praksis: **tilstanden viser 2-3 spor, der ikke findes**, hver gang der
+er to objekter i luften. Spor båret af under 2,5 sessioner i snit får
+derfor en gul advarsel i track-kortet. Læs den.
+
+Det gælder også den værste fejlmåde: ses et objekt kun af én
+observatør, kan det slet ikke fixes — men prøvebænken viser alligevel
+et opdigtet spor for det i 75 % af kørslerne.
+
+## Måletal
+
+Målt med `node eksperimenter/multiobjekt/montecarlo.js`, 40 kørsler pr.
+række. Fuld tabel og begrundelser i `eksperimenter/multiobjekt/README.md`.
+
+| Scenarie | A fundet | B fundet | Falske spor |
+|---|---|---|---|
+| Ét objekt, 3 obs, ±3° | 100 % | — | 0,1 |
+| 2+2 obs, ±3° | 95 % | 100 % | 2,6 |
+| 3+3 obs, ±3° | 88 % | 73 % | 2,0 |
+| 3 ser A, 1 ser B | 93 % | 75 % (opdigtet) | 0,5 |
+
+Prøvebænken læser algoritmen direkte ud af `dashboard.html`, så den
+altid måler den kode der faktisk kører — der ligger bevidst ingen kopi.
+
+## Test efter upload
+
+1. Lad feltet være slået fra og bekræft, at dashboardet opfører sig som
+   før: kør `simulator.php`, og se ét lilla track-kort med ~250 km/t.
+2. Sæt flueben i "Flere samtidige objekter". Med simulatorens éne
+   helikopter skal der stadig kun være ét spor — ser du pludselig to,
+   er klyngedelingen for lempelig i din geometri.
+
+---
+
 # Trigo — opdatering (v4.2): Sikkerhed, tidszoner og session-id
 
 Fire ting fra gennemgangen af projektet. To af dem var reelle fejl, der

@@ -13,13 +13,11 @@
 const fs=require('fs');
 const dash=fs.readFileSync(__dirname + '/../../dashboard.html','utf8');
 function udsnit(a,b){ return dash.slice(dash.indexOf(a), dash.indexOf(b)); }
-// Alt samles i EN eval, ellers laekker const ikke mellem scopes.
-eval([
-  udsnit('        const BIN_SEC = 5;','        // Del pejlinger op i tidsbins'),                                  // toENU/fromENU/median/lsqFix
-  udsnit('        function computeFixes(','        // Konstant-hastigheds-fit'), // gammel, til sammenligning
-  udsnit('        function fitTrack(','        function courseToCardinal('),     // uaendret
-  fs.readFileSync(__dirname + '/klyngedeling.js','utf8'),                               // ny klyngedeling
-].join('\n'));
+// ALT hentes ud af dashboard.html — både LSQ-kernen, computeFixes,
+// klyngedelingen og fitTrack. Der ligger bevidst ingen kopi her: to
+// kopier driver fra hinanden, og så måler prøvebænken noget andet end
+// det, der faktisk kører i dashboardet.
+eval(udsnit('        const BIN_SEC = 5;', '        function courseToCardinal('));
 
 const R=6371000,d2r=d=>d*Math.PI/180,r2d=r=>r*180/Math.PI;
 const bearing=(a1,o1,a2,o2)=>{const dL=d2r(o2-o1);
@@ -78,7 +76,7 @@ function sandPos(oi,t){const o=OBJ[oi];return{
   lon:o.start.lon+(o.slut.lon-o.start.lon)*t};}
 
 let OPTS={};
-function evaluer(navn, tildeling, stoj, nObj, runs=25){
+function evaluer(navn, tildeling, stoj, nObj, runs=40){
   const fundet=OBJ.slice(0,nObj).map(()=>[]), farter=OBJ.slice(0,nObj).map(()=>[]),
         kurser=OBJ.slice(0,nObj).map(()=>[]); const falske=[], ialt=[];
   for(let r=0;r<runs;r++){

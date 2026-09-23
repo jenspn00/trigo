@@ -1,7 +1,10 @@
-# Flere samtidige objekter — prototype og måleresultater
+# Flere samtidige objekter — måleresultater
 
-Dette er et **eksperiment, ikke i drift**. `dashboard.html` kører stadig
-enkelt-objekt-estimatoren fra v4. Ingen filer herfra skal uploades.
+Denne mappe indeholder **prøvebænken og måletallene**. Selve algoritmen
+ligger i `dashboard.html` bag tilvalget "Flere samtidige objekter", som
+er slået FRA som standard.
+
+Ingen filer herfra skal uploades til serveren.
 
 Formålet er den kendte begrænsning fra `INSTALL.md`:
 
@@ -58,58 +61,83 @@ skille dem ad:
   rangeres spor efter sessionstal før sporlængde — ellers når et langt
   spøgelse frem før det ægte mål og lægger beslag på pejlingerne.
 
+## I drift som tilvalg
+
+Koden ligger nu i `dashboard.html` bag afkrydsningsfeltet **"Flere
+samtidige objekter"** under tidsvinduet. Standard er FRA, så dashboardet
+opfører sig nøjagtig som hidtil for det almindelige tilfælde, hvor alle
+kigger på det samme objekt. Valget huskes i `localStorage`.
+
+Der ligger **ingen kopi af algoritmen i denne mappe**. Prøvebænken læser
+alt — `lsqFix`, `computeFixes`, klyngedelingen og `fitTrack` — direkte ud
+af `dashboard.html`, så den altid måler det, der faktisk kører. To kopier
+ville drive fra hinanden, præcis som PHP- og JS-udgaven af
+skæringsmatematikken allerede har gjort.
+
 ## Måleresultater
 
-Monte Carlo, 25 kørsler pr. række, 180 sekunder, 5-sekunders bins.
+Monte Carlo, 40 kørsler pr. række, 180 sekunder, 5-sekunders bins.
 Et objekt tæller som "fundet" kun hvis et spor ligger inden for 1200 m af
-objektets sande position og rammer kursen inden for 30°. "Falske" spor er
-spor, der ikke kunne matches til noget virkeligt objekt.
+objektets sande position **og** rammer kursen inden for 30°. "Falske" spor
+er spor, der ikke kunne matches til noget virkeligt objekt.
 
 Kør selv: `node eksperimenter/multiobjekt/montecarlo.js`
+
+Bemærk at tallene svinger mærkbart mellem kørsler — mere mellem to
+kørsler af samme scenarie end mellem de to varianter nedenfor. Læs dem
+som størrelsesordener, ikke som præcise værdier.
 
 ### Ét objekt — må ikke blive dårligere end i dag
 
 | Scenarie | Fundet | Fart (sand 256) | Kursfejl | Spor | Falske |
 |---|---|---|---|---|---|
-| 3 obs, ±3° | 100 % | 249 km/t | 0,9° | 1,2 | 0,2 |
-| 3 obs, ±8° | 76 % | 243 km/t | 2,2° | 1,3 | 0,6 |
+| 3 obs, ±3° | 100 % | 253 km/t | 0,4° | 1,1 | 0,1 |
+| 3 obs, ±8° | 78 % | 248 km/t | 2,7° | 1,3 | 0,5 |
 
-Ingen regression: ét objekt giver stadig ét spor med samme fart og kurs
-som den nuværende estimator.
+Ingen regression. Og når tilvalget er slået FRA, røres denne kode slet
+ikke — så kører `computeFixes` + `fitTrack` som før.
 
-### To samtidige objekter
+### To samtidige objekter (sendt konfiguration)
 
 | Scenarie | A fundet | B fundet | Spor | Falske |
 |---|---|---|---|---|
-| 2+2 obs, ±3° | 84 % | 96 % | 3,2 | **1,4** |
-| 2+2 obs, ±6° | 68 % | 92 % | 3,7 | **2,1** |
-| 3+3 obs, ±3° | 96 % | 96 % | 3,3 | **1,4** |
-| 3+3 obs, ±6° | 64 % | 100 % | 3,8 | **2,2** |
-| 3 ser A, 1 ser B | 96 % | 36 % | 1,6 | 0,3 |
+| 2+2 obs, ±3° | 95 % | 100 % | 4,5 | **2,6** |
+| 2+2 obs, ±6° | 50 % | 98 % | 4,0 | **2,6** |
+| 3+3 obs, ±3° | 88 % | 73 % | 3,6 | **2,0** |
+| 3 ser A, 1 ser B | 93 % | **75 %** | 2,2 | 0,5 |
 
-Begge objekter genfindes altså pålideligt med rigtig fart og kurs. **Men
-der kommer 1-2 spøgelsesspor med.**
+Begge objekter genfindes pålideligt med rigtig fart og kurs. Prisen er
+2-3 spøgelsesspor.
 
-Bemærk sidste række: objekt B ses kun af én observatør og kan derfor slet
-ikke fixes — de 36 % er spøgelser, der tilfældigvis lander nær B. Det er
-præcis den slags falske fund, der er farlige.
+Sidste række er den ubehagelige: objekt B ses kun af én observatør og kan
+**ikke** fixes, men der vises alligevel et "B" i 75 % af kørslerne. Det er
+ren opfindelse. Den slags spor bæres altid af kun to sessioner og får
+derfor advarslen i sidebaren — det er hele grunden til, at den advarsel
+findes.
 
-### Variant med krav om 3 sessioner
+### Fravalgt variant: krav om tre sessioner
 
-Kræves der 3 sessioner bag et spor, når der er flere spor
-(`pruneTracks(spor, {})` mod `{kraevTreVedFlere:false}`):
+`pruneTracks(spor, { kraevTreVedFlere: true })` kræver tre sessioner bag et
+spor, når der er flere spor, og bruger et 2-sessions-spor kun hvis intet
+spor har stærkere støtte:
 
 | Scenarie | A fundet | B fundet | Falske |
 |---|---|---|---|
-| 2+2 obs, ±3° | 52 % | 60 % | 0,9 |
-| 3+3 obs, ±3° | 72 % | 84 % | 1,4 |
-| 3 ser A, 1 ser B | 92 % | **0 %** | 0,2 |
+| 2+2 obs, ±3° | **30 %** | 70 % | 0,9 |
+| 3+3 obs, ±3° | 88 % | 70 % | 1,6 |
+| 3 ser A, 1 ser B | 93 % | **0 %** | 0,3 |
 
-Den umulige sag bliver rigtigt afvist (0 % i stedet for 36 %), men det
-koster halvdelen af de ægte fund, fordi et objekt set af to observatører
-kun har to sessioner bag sig.
+Den afviser den umulige sag helt korrekt (0 % mod 75 %) og halverer
+spøgelserne. Men den koster to tredjedele af de ægte fund i 2+2, fordi et
+objekt set af to observatører kun har to sessioner bag sig — og et
+spøgelse opsamler af og til en tredje session og udkonkurrerer dermed de
+ægte mål. 30 % detektion gør funktionen ubrugelig i netop det tilfælde,
+den er lavet til, og derfor er den ikke valgt.
 
-## Hvorfor det ikke er sat i drift
+Vil man hellere have færre falske spor end flere fund, er det én
+parameter at ændre i `processData`.
+
+## Den grænse der ikke kan kodes væk
 
 Med to observatører pr. objekt er et spøgelse **matematisk ikke til at
 skelne** fra et ægte mål ud fra geometri alene. Det er et kendt resultat i
@@ -117,18 +145,20 @@ bearings-only tracking, ikke en mangel ved koden. Højde-uenighed hjælper
 kun når objekterne flyver i forskellig højde; flyver de i samme højde,
 er der ingen information tilbage at skelne på.
 
-Konsekvensen er, at et dashboard med denne kode ville vise 1-2 fly, der
-ikke findes, hver gang der er to objekter i luften. Om det er en
-forbedring i forhold til i dag — hvor to objekter i stedet giver ét
-forvirret spor — er en vurdering af, hvad der er værst: at vise noget
-forkert, eller at vise noget forvirret.
+Konsekvensen er, at dashboardet i denne tilstand viser 2-3 fly, der ikke
+findes, hver gang der er to objekter i luften. Derfor er det et tilvalg
+og ikke standard, og derfor bærer hvert usikkert spor en advarsel.
 
-## Hvis den skal i drift
+## Næste skridt, hvis det skal bedre
 
-Anbefaling: sæt den ind bag et valg i dashboardet, med enkelt-objekt som
-standard, og vis **sessionstallet pr. spor** i track-kortet, så et spor
-båret af kun to sessioner kan ses som usikkert. Så er informationen der,
-uden at spøgelserne præsenteres med samme vægt som ægte mål.
+Spøgelserne kan ikke fjernes med mere geometri. Det der ville hjælpe er
+mere information pr. pejling:
 
-Det kræver desuden ændringer i `renderEstimate`, som i dag er skrevet til
-ét spor: ét track-kort, én farve, én fremskrivningspil.
+- **Bedre elevationsdata.** Højde-uenighed er den eneste rigtige skelnen
+  vi har, og den er begrænset af elevationsstøjen. En gun-enhed med
+  BNO055 måler elevation langt bedre end en telefon.
+- **Lad observatøren mærke objektet.** Kan to observatører angive, at de
+  kigger på *det samme* objekt (farve, type, et nummer i app'en), falder
+  hele spøgelsesproblemet bort.
+- **Flere observatører pr. objekt.** Tre er nok til at give ægte mål et
+  reelt fortrin i støtte.

@@ -148,32 +148,47 @@
         .quality-poor   { background: rgba(248,81,73,0.15);  color: var(--danger); }
 
         /* ===== TRACK-KORT (v4) ===== */
-        #track-card {
-            display: none;
-            margin: 0 14px 12px 14px;
-            background: linear-gradient(135deg, rgba(188,140,255,0.08), rgba(188,140,255,0.02));
-            border: 1px solid rgba(188,140,255,0.35);
+        /* Track-kort: ét pr. spor. Farven kommer fra --tc, som saettes
+           inline pr. kort, saa flere spor kan skelnes paa kortet og i
+           sidebaren med samme farve. */
+        .track-card {
+            margin: 0 14px 10px 14px;
+            background: linear-gradient(135deg, color-mix(in srgb, var(--tc) 10%, transparent),
+                                                color-mix(in srgb, var(--tc) 2%, transparent));
+            border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent);
             border-radius: 10px; padding: 12px 14px;
         }
-        #track-card .tc-title {
+        .track-card .tc-title {
             font-size: 0.75em; font-weight: 700; letter-spacing: 0.08em;
-            text-transform: uppercase; color: var(--purple); margin-bottom: 8px;
+            text-transform: uppercase; color: var(--tc); margin-bottom: 8px;
             display: flex; align-items: center; gap: 6px;
         }
-        #track-card .tc-grid {
+        .track-card .tc-grid {
             display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
         }
-        #track-card .tc-item .tc-val {
+        .track-card .tc-item .tc-val {
             display: block; font-family: var(--font-mono); font-size: 1.15em;
             font-weight: 700; color: var(--text-primary);
         }
-        #track-card .tc-item .tc-label {
+        .track-card .tc-item .tc-label {
             display: block; font-size: 0.7em; color: var(--text-secondary);
         }
-        #track-card .tc-meta {
+        .track-card .tc-meta {
             margin-top: 8px; font-size: 0.72em; font-family: var(--font-mono);
             color: var(--text-muted);
         }
+        .track-card .tc-warn {
+            margin-top: 8px; padding: 6px 8px; border-radius: 6px;
+            background: rgba(210,153,34,0.12); color: var(--warning);
+            font-size: 0.7em; line-height: 1.45;
+        }
+        #multi-row {
+            display: flex; align-items: center; gap: 7px;
+            margin-top: 9px; font-size: 0.78em; color: var(--text-secondary);
+        }
+        #multi-row input { accent-color: var(--purple); cursor: pointer; }
+        #multi-row label { cursor: pointer; }
+        #multi-hint { font-size: 0.68em; color: var(--text-muted); margin-top: 4px; line-height: 1.45; }
         .fix-arrow-icon {
             color: var(--purple);
             font-size: 22px; line-height: 22px;
@@ -226,21 +241,20 @@
 
             <div id="truncation-note"></div>
 
-            <div id="track-card">
-                <div class="tc-title">&#x1F6F8; Estimeret track</div>
-                <div class="tc-grid">
-                    <div class="tc-item"><span class="tc-val" id="tc-speed">-</span><span class="tc-label">Fart</span></div>
-                    <div class="tc-item"><span class="tc-val" id="tc-course">-</span><span class="tc-label">Kurs</span></div>
-                    <div class="tc-item"><span class="tc-val" id="tc-height">-</span><span class="tc-label">Højde</span></div>
-                    <div class="tc-item"><span class="tc-val" id="tc-climb">-</span><span class="tc-label">Stigning</span></div>
-                </div>
-                <div class="tc-meta" id="tc-meta">-</div>
-            </div>
+            <div id="track-cards"></div>
 
             <div id="config-section">
                 <label>Tidsvindue:</label>
                 <input type="number" id="time-window" value="120" min="10" max="3600" step="10">
                 <span class="config-hint">sek</span>
+                <div id="multi-row">
+                    <input type="checkbox" id="multi-object">
+                    <label for="multi-object">Flere samtidige objekter</label>
+                </div>
+                <div id="multi-hint">
+                    Deler pejlingerne op i klynger, så to objekter kan spores hver for sig.
+                    Kan vise spøgelsesmål — se advarslen på spor båret af kun to sessioner.
+                </div>
             </div>
 
             <div id="tab-bar">
@@ -605,6 +619,409 @@
             return fixes;
         }
 
+
+        // ============================================================
+        //  FLERE SAMTIDIGE OBJEKTER  (tilvalg)
+        //
+        //  Uden dette antager estimatoren ét objekt ad gangen: alle
+        //  pejlinger i et tidsbin ryger i ét LSQ-fix. To objekter i
+        //  luften giver da ét forvirret fix midt imellem dem.
+        //
+        //  Her deles pejlingerne først op i klynger pr. bin, og fixene
+        //  kobles derefter til hvert sit spor på tværs af bins — begge
+        //  dele er nødvendige, for ellers fitter fitTrack stadig én ret
+        //  linje gennem begge objekter.
+        //
+        //  VIGTIGT — spøgelsesmål: ser observatør 1 på objekt A og
+        //  observatør 3 på objekt B, skærer deres pejlelinjer også
+        //  hinanden i et punkt hvor der ikke er noget. Med to
+        //  observatører pr. objekt er sådan et spøgelse matematisk ikke
+        //  til at skelne fra et ægte mål ud fra geometri alene. Højde-
+        //  uenighed og sessionsstøtte dæmper det, men fjerner det ikke.
+        //  Derfor er dette et TILVALG, og spor båret af kun to
+        //  sessioner markeres som usikre i sidebaren.
+        //
+        //  Måletal: eksperimenter/multiobjekt/README.md
+        //  Prøvebænk: node eksperimenter/multiobjekt/montecarlo.js
+        // ============================================================
+
+        // --- 1. Parvise skæringer inde i ét bin (kun på tværs af sessioner) ---
+        function binIntersections(items) {
+            const out = [];
+            for (let i = 0; i < items.length; i++) {
+                for (let j = i + 1; j < items.length; j++) {
+                    const A = items[i], B = items[j];
+                    if (A.b.userId === B.b.userId) continue;      // aldrig samme observatør
+                    const det = A.d.x * B.d.y - A.d.y * B.d.x;
+                    if (Math.abs(det) < 1e-6) continue;           // parallelle
+                    const rx = B.p.x - A.p.x, ry = B.p.y - A.p.y;
+                    const t = (rx * B.d.y - ry * B.d.x) / det;    // langs A
+                    const u = (rx * A.d.y - ry * A.d.x) / det;    // langs B
+                    if (t <= 0 || u <= 0) continue;               // bag om en observatør
+                    if (t > 100000 || u > 100000) continue;       // urimelig afstand
+                    out.push({ x: A.p.x + t * A.d.x, y: A.p.y + t * A.d.y, i, j, range: Math.min(t, u) });
+                }
+            }
+            return out;
+        }
+
+        // --- 2. Greedy "leder"-klyngedeling: tættest befolkede punkt vinder ---
+        function clusterPoints(pts, eps) {
+            const brugt = new Array(pts.length).fill(false);
+            const klynger = [];
+            while (true) {
+                let bedst = -1, bedstAntal = 0;
+                for (let i = 0; i < pts.length; i++) {
+                    if (brugt[i]) continue;
+                    let n = 0;
+                    for (let j = 0; j < pts.length; j++) {
+                        if (brugt[j]) continue;
+                        if (Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y) <= eps) n++;
+                    }
+                    if (n > bedstAntal) { bedstAntal = n; bedst = i; }
+                }
+                if (bedst < 0) break;
+                const med = [];
+                for (let j = 0; j < pts.length; j++) {
+                    if (brugt[j]) continue;
+                    if (Math.hypot(pts[bedst].x - pts[j].x, pts[bedst].y - pts[j].y) <= eps) { med.push(pts[j]); brugt[j] = true; }
+                }
+                const cx = med.reduce((s, p) => s + p.x, 0) / med.length;
+                const cy = med.reduce((s, p) => s + p.y, 0) / med.length;
+                klynger.push({ x: cx, y: cy, n: med.length, punkter: med });
+            }
+            return klynger;
+        }
+
+        // --- 3. Klyngedel ét bin -> liste af pejle-delmængder ---
+        // SPØGELSESMÅL: krydser obs1's pejling mod objekt A og obs3's pejling mod
+        // objekt B hinanden, opstaar et falsk "mål". Med præcis to observatører
+        // pr. objekt er et spøgelse geometrisk lige så troværdigt som et ægte mål
+        // - to linjer skærer altid hinanden i præcis ét punkt, så residualet er
+        // nul i begge tilfaelde.
+        //
+        // Elevationsvinklen afgør sagen: kigger de to observatører på hver sit
+        // objekt i hver sin højde, er de UENIGE om højden i skæringspunktet.
+        // Et ægte mål giver enighed. Det er den eneste information der kan skille
+        // dem ad i et enkelt tidsbin, og den er allerede i data.
+        function clusterBin(bearings) {
+            const lat0 = bearings.reduce((s, b) => s + b.lat, 0) / bearings.length;
+            const lon0 = bearings.reduce((s, b) => s + b.lon, 0) / bearings.length;
+            const cosLat0 = Math.cos(lat0 * Math.PI / 180);
+            const items = bearings.map(b => {
+                const th = b.azi * Math.PI / 180;
+                return {
+                    b,
+                    p: { x: (b.lon - lon0) * cosLat0 * M_PER_DEG_LAT, y: (b.lat - lat0) * M_PER_DEG_LAT },
+                    d: { x: Math.sin(th), y: Math.cos(th) },
+                    n: { x: Math.cos(th), y: -Math.sin(th) }
+                };
+            });
+
+            const kryds = binIntersections(items);
+            if (kryds.length === 0) return [];
+
+            const medRange = kryds.map(k => k.range).sort((a, b) => a - b)[Math.floor(kryds.length / 2)];
+            const eps = Math.max(400, 0.18 * medRange);
+            const gate = Math.max(500, eps * 1.3);
+
+            // Klyngerne konkurrerer IKKE om pejlingerne. En pejling mod objekt A
+            // kan indgaa i flere kandidater; det er sporkoblingen bagefter der
+            // afgør hvilke kandidater der holder over tid.
+            // Leder-klyngedeling med fast radius splitter gerne EET objekt i flere
+            // klynger, fordi punkter lige uden for radius bliver til egen klynge.
+            // En sammensmeltningsrunde samler dem igen; ægte objekter ligger
+            // kilometer fra hinanden og smelter ikke sammen.
+            const klynger = mergeNearby(clusterPoints(kryds, eps), eps * 2)
+                .sort((a, b) => b.n - a.n);
+
+            const resultat = [];
+            const set = [];
+            for (const k of klynger) {
+                const valgt = [];
+                for (const it of items) {
+                    const dx = k.x - it.p.x, dy = k.y - it.p.y;
+                    const s = it.d.x * dx + it.d.y * dy;
+                    if (s <= 0) continue;
+                    const r = Math.abs(it.n.x * dx + it.n.y * dy);
+                    if (r > gate) continue;
+                    valgt.push({ it, s });
+                }
+                const sessioner = new Set(valgt.map(v => v.it.b.userId));
+                if (valgt.length < 2 || sessioner.size < 2) continue;
+
+                // Højde-enighed pr. session: median af obsAlt + s*tan(elev)
+                const perSession = new Map();
+                for (const v of valgt) {
+                    const e = v.it.b.elev;
+                    if (isNaN(e) || Math.abs(e) >= 89) continue;
+                    const h = (v.it.b.obsAlt || 0) + v.s * Math.tan(e * Math.PI / 180);
+                    if (h < -200 || h > 30000) continue;
+                    if (!perSession.has(v.it.b.userId)) perSession.set(v.it.b.userId, []);
+                    perSession.get(v.it.b.userId).push(h);
+                }
+                if (perSession.size >= 2) {
+                    const sessionHøjder = [...perSession.values()].map(median);
+                    const hMin = Math.min(...sessionHøjder), hMax = Math.max(...sessionHøjder);
+                    const hMid = (hMin + hMax) / 2;
+                    // Tolerancen maa være rundhåndet: elevationsstøj gange
+                    // afstand giver hurtigt hundreder af meter.
+                    const tol = Math.max(250, 0.6 * Math.abs(hMid));
+                    if (hMax - hMin > tol) continue;             // uenige -> spøgelse
+                }
+
+                // Samme objekt maa ikke tælles to gange i samme bin: har denne
+                // kandidat stort set de samme pejlinger som en allerede accepteret,
+                // er det den samme ting set gennem en lidt anden klynge.
+                const nøgler = new Set(valgt.map(v => v.it.b.userId + '@' + v.it.b.time));
+                let dublet = false;
+                for (const tidl of resultat) {
+                    const t = new Set(tidl.map(b => b.userId + '@' + b.time));
+                    let fælles = 0;
+                    for (const n of nøgler) if (t.has(n)) fælles++;
+                    if (fælles / Math.min(nøgler.size, t.size) > 0.7) { dublet = true; break; }
+                }
+                if (dublet) continue;
+                if (set.some(o => Math.hypot(o.x - k.x, o.y - k.y) < eps * 0.75)) continue;
+                set.push(k);
+                resultat.push(valgt.map(v => v.it.b));
+            }
+            return resultat;
+        }
+
+        // Smelt klynger sammen hvis centroiderne ligger tæt
+        function mergeNearby(klynger, afstand) {
+            const ud = [];
+            for (const k of klynger) {
+                const naer = ud.find(o => Math.hypot(o.x - k.x, o.y - k.y) <= afstand);
+                if (naer) {
+                    const n = naer.n + k.n;
+                    naer.x = (naer.x * naer.n + k.x * k.n) / n;
+                    naer.y = (naer.y * naer.n + k.y * k.n) / n;
+                    naer.n = n;
+                } else {
+                    ud.push({ x: k.x, y: k.y, n: k.n });
+                }
+            }
+            return ud;
+        }
+
+        // --- 4. computeFixes: ét fix PR. KLYNGE pr. bin (før: ét pr. bin) ---
+        function computeFixesClustered(points) {
+            const bins = new Map();
+            for (const p of points) {
+                if (isNaN(p.time)) continue;
+                const key = Math.floor(p.time / (BIN_SEC * 1000));
+                if (!bins.has(key)) bins.set(key, []);
+                bins.get(key).push(p);
+            }
+            const fixes = [];
+            for (const [key, arr] of [...bins.entries()].sort((a, b) => a[0] - b[0])) {
+                if (new Set(arr.map(p => p.userId)).size < 2) continue;
+                for (const delm of clusterBin(arr)) {
+                    const f = lsqFix(delm);
+                    if (f) fixes.push({ ...f, time: (key + 0.5) * BIN_SEC * 1000 });
+                }
+            }
+            return fixes;
+        }
+
+        // --- 5. Kobl fixes på tværs af bins til separate spor ---
+        // Greedy nærmeste-nabo med port. Et spor med fart forudsiger hvor det bør
+        // være; et spor med ét fix kan kun gætte på "samme sted".
+        function buildTracks(fixes, opts = {}) {
+            const MAX_HUL_MS = opts.maxGapMs ?? 20000;   // luk spor der ikke er set
+            const lat0 = fixes.length ? fixes[0].lat : 0;
+            const lon0 = fixes.length ? fixes[0].lon : 0;
+            const cosLat0 = Math.cos(lat0 * Math.PI / 180);
+            const enu = f => ({
+                x: (f.lon - lon0) * cosLat0 * M_PER_DEG_LAT,
+                y: (f.lat - lat0) * M_PER_DEG_LAT
+            });
+
+            const spor = [];
+            for (const f of [...fixes].sort((a, b) => a.time - b.time)) {
+                const p = enu(f);
+                let bedst = null, bedstDist = -Infinity;
+                for (const s of spor) {
+                    const dt = (f.time - s.sidsteTid) / 1000;
+                    if (dt <= 0 || f.time - s.sidsteTid > MAX_HUL_MS) continue;
+                    // Forudsig position ud fra sporets nuværende hastighed
+                    const px = s.sidste.x + (s.vx || 0) * dt;
+                    const py = s.sidste.y + (s.vy || 0) * dt;
+                    const d = Math.hypot(p.x - px, p.y - py);
+                    // Port: fart gange tid plus en fast slæk for fix-støj
+                    const fart = Math.hypot(s.vx || 0, s.vy || 0);
+                    const port = Math.max(800, fart * dt * 1.5 + 600);
+                    // Ved tvivl vinder det LAENGSTE spor, ikke blot det nærmeste.
+                    // Ellers vipper koblingen frem og tilbage og skærer ét objekt
+                    // op i parallelle stumper.
+                    if (d >= port) continue;
+                    const score = s.fixes.length * 1e6 - d;
+                    if (score > bedstDist) { bedstDist = score; bedst = s; }
+                }
+                if (bedst) {
+                    const dt = (f.time - bedst.sidsteTid) / 1000;
+                    // Glidende hastighedsestimat (simpel eksponentiel udjævning)
+                    const nyVx = (p.x - bedst.sidste.x) / dt;
+                    const nyVy = (p.y - bedst.sidste.y) / dt;
+                    bedst.vx = bedst.vx == null ? nyVx : 0.5 * bedst.vx + 0.5 * nyVx;
+                    bedst.vy = bedst.vy == null ? nyVy : 0.5 * bedst.vy + 0.5 * nyVy;
+                    bedst.sidste = p; bedst.sidsteTid = f.time; bedst.fixes.push(f);
+                } else {
+                    spor.push({ fixes: [f], sidste: p, sidsteTid: f.time, vx: null, vy: null });
+                }
+            }
+            return spor.map(s => s.fixes);
+        }
+
+        // --- 6. Fjern spøgelsesspor ---
+        // Et spøgelse laves af pejlinger der ALLEREDE er forklaret af et ægte
+        // spor. Vi rangerer sporene efter kvalitet, lader de bedste lægge beslag
+        // på deres pejlinger, og kasserer spor hvis pejlinger stort set alle
+        // er brugt i forvejen.
+        function pruneTracks(spor, opts = {}) {
+            const MIN_FIXES = opts.minFixes ?? 4;
+            const MIN_SPAN  = opts.minSpanSec ?? 15;
+            const MAX_DELT  = opts.maxDelt ?? 0.45;  // hvor stor overlapning tolereres
+
+            const nøgle = b => b.userId + '@' + b.time;
+
+            const kandidater = spor
+                .map(fixes => {
+                    if (fixes.length < MIN_FIXES) return null;
+                    const span = (fixes[fixes.length - 1].time - fixes[0].time) / 1000;
+                    if (span < MIN_SPAN) return null;
+                    const fit = fitTrack(fixes);
+                    if (!fit) return null;
+                    // Linearitet: et ægte objekt flyver lige, et spøgelse slingrer.
+                    const straekning = fit.speed * span;
+                    if (fit.rmsFit > Math.max(200, 0.3 * straekning)) return null;
+                    const pejlinger = new Set();
+                    for (const f of fixes) for (const b of (f.members || [])) pejlinger.add(nøgle(b));
+                    // RANGERING - afgørende for at slaa spøgelser ud.
+                    // Et ægte mål set af 3 observatører bæres af 3 pejlelinjer
+                    // (C(3,2)=3 skæringspar); et spøgelse opstaar altid af
+                    // præcis 2 linjer fra hver sit objekt. Sessionstallet er
+                    // derfor den stærkeste indikator vi har, og det skal veje
+                    // tungere end sporlængden - ellers når et langt spøgelse
+                    // frem før det ægte mål og lægger beslag på pejlingerne.
+                    const medSess = fixes.reduce((s, f) => s + f.nSessions, 0) / fixes.length;
+                    const score = medSess * 1e6 + fixes.length * 1e3 - fit.rmsFit;
+                    return { fixes, fit, pejlinger, medSess, score };
+                })
+                .filter(Boolean)
+                .sort((a, b) => b.score - a.score);
+
+            const brugt = new Set();
+            const beholdt = [];
+            for (const k of kandidater) {
+                let delt = 0;
+                for (const p of k.pejlinger) if (brugt.has(p)) delt++;
+                if (k.pejlinger.size && delt / k.pejlinger.size > MAX_DELT) continue;
+
+                // Samme objekt to gange? Overlapper sporet et allerede beholdt spor
+                // i tid, og ligger de to inden for få hundrede meter af hinanden
+                // på de fælles tidspunkter, er det den samme ting.
+                const dublet = beholdt.some(b => sammeObjekt(b.fixes, k.fixes));
+                if (dublet) continue;
+
+                for (const p of k.pejlinger) brugt.add(p);
+                beholdt.push(k);
+            }
+
+            // Når der kun er EET spor, er der intet spøgelse at forveksle det
+            // med - så slippes det igennem uanset sessionstal (det er dagens
+            // adfærd, og den maa ikke forringes). Er der FLERE spor, kan to af
+            // dem være et spøgelsespar, og så kræves der tre sessioner bag.
+            if (beholdt.length > 1 && opts.kraevTreVedFlere !== false) {
+                // Har NOGEN spor tre sessioner bag sig, er de spøgelser
+                // vaerd at kassere: et spøgelse opstår altid af præcis to
+                // pejlelinjer, så et 3-sessions-spor er næsten altid ægte.
+                // Har INGEN det (to observatører pr. objekt), er kravet
+                // meningsløst — så ville vi kassere de ægte mål med.
+                // Der vises alt, og advarslen i sidebaren må gøre arbejdet.
+                const stærke = beholdt.filter(k => k.medSess >= 2.5);
+                if (!stærke.length) return beholdt;
+                // beholdt er sorteret efter score, så [0] er bedst
+                // understøttet. Det slipper altid igennem, så kravet ikke
+                // kan kassere selve hovedsporet.
+                if (!stærke.includes(beholdt[0])) stærke.unshift(beholdt[0]);
+                return stærke;
+            }
+            return beholdt;
+        }
+
+        // --- 7. Smelt spor-fragmenter sammen ---
+        // Sporkoblingen taber tråden når et fix støjer ud over porten, og saa
+        // starter der et nyt spor på det samme objekt. Her samles stumper hvis
+        // det ene slutter hvor det andet begynder - baade i tid og i kinematik.
+        function mergeFragments(spor, opts = {}) {
+            const MAX_HUL = opts.maxGapMs ?? 25000;
+            const M = M_PER_DEG_LAT;
+
+            let liste = spor.map(f => [...f].sort((a, b) => a.time - b.time))
+                            .filter(f => f.length);
+            let ændret = true;
+            while (ændret) {
+                ændret = false;
+                ydre:
+                for (let i = 0; i < liste.length; i++) {
+                    for (let j = 0; j < liste.length; j++) {
+                        if (i === j) continue;
+                        const A = liste[i], B = liste[j];
+                        const aSlut = A[A.length - 1], bStart = B[0];
+                        const hul = bStart.time - aSlut.time;
+                        if (hul <= 0 || hul > MAX_HUL) continue;
+
+                        // A's hastighed ud fra dens to sidste fixes
+                        let vx = 0, vy = 0;
+                        if (A.length >= 2) {
+                            const p = A[A.length - 2], dt = (aSlut.time - p.time) / 1000;
+                            if (dt > 0) {
+                                const cos = Math.cos(p.lat * Math.PI / 180);
+                                vx = ((aSlut.lon - p.lon) * cos * M) / dt;
+                                vy = ((aSlut.lat - p.lat) * M) / dt;
+                            }
+                        }
+                        const dts = hul / 1000;
+                        const cos = Math.cos(aSlut.lat * Math.PI / 180);
+                        const fx = (bStart.lon - aSlut.lon) * cos * M - vx * dts;
+                        const fy = (bStart.lat - aSlut.lat) * M - vy * dts;
+                        const fart = Math.hypot(vx, vy);
+                        const port = Math.max(1000, fart * dts * 1.2 + 800);
+                        if (Math.hypot(fx, fy) > port) continue;
+
+                        liste[i] = A.concat(B);
+                        liste.splice(j, 1);
+                        ændret = true;
+                        break ydre;
+                    }
+                }
+            }
+            return liste;
+        }
+
+        // To spor regnes som samme objekt hvis de overlapper i tid og ligger tæt
+        function sammeObjekt(a, b, tol = 1500) {
+            const bVed = t => {
+                let bedst = null, bd = Infinity;
+                for (const f of b) { const d = Math.abs(f.time - t); if (d < bd) { bd = d; bedst = f; } }
+                return bd <= 6000 ? bedst : null;
+            };
+            let fælles = 0, tæt = 0;
+            for (const f of a) {
+                const g = bVed(f.time);
+                if (!g) continue;
+                fælles++;
+                const cos = Math.cos(f.lat * Math.PI / 180);
+                const dx = (g.lon - f.lon) * cos * M_PER_DEG_LAT;
+                const dy = (g.lat - f.lat) * M_PER_DEG_LAT;
+                if (Math.hypot(dx, dy) < tol) tæt++;
+            }
+            return fælles >= 2 && tæt / fælles > 0.6;
+        }
+
         // Konstant-hastigheds-fit over fixes → fart, kurs, stigning
         function fitTrack(fixes) {
             if (fixes.length < 3) return null;
@@ -672,6 +1089,27 @@
             }
             return userColorMap[userId];
         }
+
+        // --- TILVALG: FLERE SAMTIDIGE OBJEKTER ---
+        // Standard er FRA, saa dashboardet opfoerer sig som hidtil for
+        // det almindelige tilfaelde: alle kigger paa det samme objekt.
+        const multiCheckbox = document.getElementById('multi-object');
+        try {
+            multiCheckbox.checked = localStorage.getItem('trigo_multi_object') === '1';
+        } catch (e) { /* privat vindue e.l. — så bare standard */ }
+
+        function flereObjekterSlaaetTil() {
+            return multiCheckbox.checked;
+        }
+
+        multiCheckbox.addEventListener('change', () => {
+            try { localStorage.setItem('trigo_multi_object', multiCheckbox.checked ? '1' : '0'); }
+            catch (e) { /* ignoreres */ }
+            // Tving gentegning: data er uændrede, så hash-tjekket i
+            // updateDashboard ville ellers springe over.
+            lastDataHash = '';
+            updateDashboard();
+        });
 
         // --- DATA-HENTNING ---
         async function updateDashboard() {
@@ -846,10 +1284,33 @@
                 }
             }
 
-            // 4b. v4: LSQ-fixes pr. tidsbin + konstant-hastigheds-track
-            const fixes = computeFixes(points);
-            const track = fitTrack(fixes);
-            renderEstimate(fixes, track);
+            // 4b. LSQ-fixes pr. tidsbin + konstant-hastigheds-track
+            let spor = [], tomBesked = null;
+            if (flereObjekterSlaaetTil()) {
+                // Klyngedeling pr. bin -> flere kandidat-fixes -> kobling
+                // til separate spor -> frasortering af spøgelsesmål.
+                const kandidater = computeFixesClustered(points);
+                // kraevTreVedFlere: false — bevidst valg.
+                // Kravet om tre sessioner bag et spor halverer antallet af
+                // spøgelser, men koster to tredjedele af de ægte fund, når
+                // hvert objekt kun ses af to observatører (30 % mod 96 % i
+                // prøvebænken). Det gør funktionen ubrugelig i netop det
+                // tilfælde den er lavet til. I stedet vises alle spor, og
+                // dem med under 2,5 sessioner i snit markeres som usikre.
+                spor = pruneTracks(mergeFragments(buildTracks(kandidater)),
+                                   { kraevTreVedFlere: false });
+                if (!spor.length && kandidater.length) {
+                    tomBesked = `${kandidater.length} kandidat-fixes, men intet spor holder endnu `
+                              + `— der kræves 4 fixes over 15+ sek pr. objekt i denne tilstand.`;
+                }
+            } else {
+                // Enkelt objekt: ét fix pr. bin, som hidtil.
+                const fixes = computeFixes(points);
+                if (fixes.length) {
+                    spor = [{ fixes, fit: fitTrack(fixes), medSess: gennemsnitSessioner(fixes) }];
+                }
+            }
+            renderEstimate(spor, tomBesked);
 
             // 5. Sidebar
             updateStats(observations.length, targets.length, uniqueUsers.size);
@@ -861,73 +1322,112 @@
             processAddressQueue(addrQueue);
         }
 
-        // v4: tegn fixes + track-vektor og opdatér track-kortet
-        function renderEstimate(fixes, track) {
+        // Tegner ét eller flere spor. Hvert spor faar sin egen farve baade
+        // paa kortet og i sidebaren, saa de kan holdes ud fra hinanden.
+        const TRACK_COLORS = ['#bc8cff', '#3fb950', '#d29922', '#58a6ff', '#ff7b72', '#79c0ff'];
+
+        function gennemsnitSessioner(fixes) {
+            if (!fixes.length) return 0;
+            return fixes.reduce((s, f) => s + f.nSessions, 0) / fixes.length;
+        }
+
+        function renderEstimate(spor, tomBesked) {
             estLayer.clearLayers();
-            const card = document.getElementById('track-card');
+            const holder = document.getElementById('track-cards');
+            holder.innerHTML = '';
 
-            // Fixes
-            fixes.forEach((f, i) => {
-                const isLatest = i === fixes.length - 1;
-                L.circleMarker([f.lat, f.lon], {
-                    radius: isLatest ? 7 : 4.5,
-                    color: isLatest ? '#fff' : '#bc8cff',
-                    fillColor: '#bc8cff', fillOpacity: 0.9, weight: isLatest ? 2 : 1
-                }).bindPopup(`
-                    <span class="popup-title" style="color:var(--purple)">Fix ${i + 1}${isLatest ? ' (seneste)' : ''}</span>
-                    <span class="popup-detail">Tid: <span class="val">${new Date(f.time).toLocaleTimeString('da-DK')}</span></span>
-                    <span class="popup-detail">Pejlinger: <span class="val">${f.nBearings}</span> fra <span class="val">${f.nSessions}</span> sessioner</span>
-                    <span class="popup-detail">RMS-residual: <span class="val">${Math.round(f.rms)} m</span></span>
-                    <span class="popup-detail">Vinkel-spredning: <span class="val">${Math.round(f.spread)}°</span></span>
-                    ${f.height !== null ? `<span class="popup-detail">Højde: <span class="val">${Math.round(f.height)} m</span></span>` : ''}
-                    <span class="popup-detail">Koordinater: <span class="val">${f.lat.toFixed(5)}, ${f.lon.toFixed(5)}</span></span>
-                `).addTo(estLayer);
-            });
-
-            // Track-linje gennem fixes
-            if (fixes.length > 1) {
-                L.polyline(fixes.map(f => [f.lat, f.lon]),
-                    { color: '#bc8cff', weight: 3, opacity: 0.75 }).addTo(estLayer);
-            }
-
-            if (!track) {
-                card.style.display = fixes.length ? 'block' : 'none';
-                if (fixes.length) {
-                    // Vis seneste fix uden fart/kurs (for få fixes til et fit)
-                    const last = fixes[fixes.length - 1];
-                    document.getElementById('tc-speed').textContent  = '-';
-                    document.getElementById('tc-course').textContent = '-';
-                    document.getElementById('tc-height').textContent = last.height !== null ? `${Math.round(last.height)} m` : '-';
-                    document.getElementById('tc-climb').textContent  = '-';
-                    document.getElementById('tc-meta').textContent   =
-                        `${fixes.length} fix — mindst 3 fixes over 8+ sek kræves for fart/kurs`;
+            if (!spor.length) {
+                if (tomBesked) {
+                    holder.innerHTML = `<div class="track-card" style="--tc:#8b949e">
+                        <div class="tc-meta" style="margin-top:0">${tomBesked}</div></div>`;
                 }
                 return;
             }
 
-            // Fremskrivnings-vektor: seneste modelposition + 60 sek frem
-            L.polyline([[track.lastLL.lat, track.lastLL.lon], [track.projLL.lat, track.projLL.lon]],
-                { color: '#bc8cff', weight: 2, opacity: 0.9, dashArray: '2,7' }).addTo(estLayer);
-            L.marker([track.projLL.lat, track.projLL.lon], {
-                icon: L.divIcon({
-                    className: '',
-                    html: `<div class="fix-arrow-icon" style="transform: rotate(${track.course}deg)">&#10148;</div>`,
-                    iconSize: [22, 22], iconAnchor: [11, 11]
-                }),
-                interactive: false
-            }).addTo(estLayer);
+            const flere = spor.length > 1;
 
-            // Track-kort i sidebar
-            card.style.display = 'block';
-            const kmh = track.speed * 3.6;
-            const lastFix = fixes[fixes.length - 1];
-            document.getElementById('tc-speed').textContent  = `${kmh.toFixed(0)} km/t`;
-            document.getElementById('tc-course').textContent = `${Math.round(track.course)}° ${courseToCardinal(track.course)}`;
-            document.getElementById('tc-height').textContent = lastFix.height !== null ? `${Math.round(lastFix.height)} m` : '-';
-            document.getElementById('tc-climb').textContent  = track.climb !== null
-                ? `${track.climb >= 0 ? '+' : ''}${(track.climb * 60).toFixed(0)} m/min` : '-';
-            document.getElementById('tc-meta').textContent =
-                `${track.nFixes} fixes over ${Math.round(track.span)} s — fit-RMS ${Math.round(track.rmsFit)} m`;
+            spor.forEach((s, si) => {
+                const farve = TRACK_COLORS[si % TRACK_COLORS.length];
+                const fixes = s.fixes;
+                const track = s.fit;
+
+                fixes.forEach((f, i) => {
+                    const seneste = i === fixes.length - 1;
+                    L.circleMarker([f.lat, f.lon], {
+                        radius: seneste ? 7 : 4.5,
+                        color: seneste ? '#fff' : farve,
+                        fillColor: farve, fillOpacity: 0.9, weight: seneste ? 2 : 1
+                    }).bindPopup(`
+                        <span class="popup-title" style="color:${farve}">Fix ${i + 1}${seneste ? ' (seneste)' : ''}${flere ? ' — spor ' + (si + 1) : ''}</span>
+                        <span class="popup-detail">Tid: <span class="val">${new Date(f.time).toLocaleTimeString('da-DK')}</span></span>
+                        <span class="popup-detail">Pejlinger: <span class="val">${f.nBearings}</span> fra <span class="val">${f.nSessions}</span> sessioner</span>
+                        <span class="popup-detail">RMS-residual: <span class="val">${Math.round(f.rms)} m</span></span>
+                        <span class="popup-detail">Vinkel-spredning: <span class="val">${Math.round(f.spread)}°</span></span>
+                        ${f.height !== null ? `<span class="popup-detail">Højde: <span class="val">${Math.round(f.height)} m</span></span>` : ''}
+                        <span class="popup-detail">Koordinater: <span class="val">${f.lat.toFixed(5)}, ${f.lon.toFixed(5)}</span></span>
+                    `).addTo(estLayer);
+                });
+
+                if (fixes.length > 1) {
+                    L.polyline(fixes.map(f => [f.lat, f.lon]),
+                        { color: farve, weight: 3, opacity: 0.75 }).addTo(estLayer);
+                }
+
+                const sidste = fixes[fixes.length - 1];
+                const titel = `&#x1F6F8; Estimeret track${flere ? ' ' + (si + 1) : ''}`;
+
+                if (!track) {
+                    // For faa fixes til et fart/kurs-fit — vis kun hoejden.
+                    holder.insertAdjacentHTML('beforeend', `
+                        <div class="track-card" style="--tc:${farve}">
+                            <div class="tc-title">${titel}</div>
+                            <div class="tc-grid">
+                                <div class="tc-item"><span class="tc-val">-</span><span class="tc-label">Fart</span></div>
+                                <div class="tc-item"><span class="tc-val">-</span><span class="tc-label">Kurs</span></div>
+                                <div class="tc-item"><span class="tc-val">${sidste.height !== null ? Math.round(sidste.height) + ' m' : '-'}</span><span class="tc-label">Højde</span></div>
+                                <div class="tc-item"><span class="tc-val">-</span><span class="tc-label">Stigning</span></div>
+                            </div>
+                            <div class="tc-meta">${fixes.length} fix — mindst 3 fixes over 8+ sek kræves for fart/kurs</div>
+                        </div>`);
+                    return;
+                }
+
+                // Fremskrivnings-vektor: seneste modelposition + 60 sek frem
+                L.polyline([[track.lastLL.lat, track.lastLL.lon], [track.projLL.lat, track.projLL.lon]],
+                    { color: farve, weight: 2, opacity: 0.9, dashArray: '2,7' }).addTo(estLayer);
+                L.marker([track.projLL.lat, track.projLL.lon], {
+                    icon: L.divIcon({
+                        className: '',
+                        html: `<div class="fix-arrow-icon" style="color:${farve};transform: rotate(${track.course}deg)">&#10148;</div>`,
+                        iconSize: [22, 22], iconAnchor: [11, 11]
+                    }),
+                    interactive: false
+                }).addTo(estLayer);
+
+                // Sessionstallet er det vigtigste kvalitetstegn naar der er
+                // flere spor: et spoegelsesmaal baeres altid af praecis to
+                // pejlelinjer, mens et aegte maal set af tre observatoerer
+                // baeres af tre.
+                const medSess = s.medSess != null ? s.medSess : gennemsnitSessioner(fixes);
+                const advarsel = (flere && medSess < 2.5)
+                    ? `<div class="tc-warn">Båret af kun ${medSess.toFixed(1)} sessioner i snit.
+                       Med to observatører pr. objekt kan et spøgelsesmål ikke skelnes fra et
+                       ægte ud fra geometrien alene — dette spor kan være falsk.</div>`
+                    : '';
+
+                holder.insertAdjacentHTML('beforeend', `
+                    <div class="track-card" style="--tc:${farve}">
+                        <div class="tc-title">${titel}</div>
+                        <div class="tc-grid">
+                            <div class="tc-item"><span class="tc-val">${(track.speed * 3.6).toFixed(0)} km/t</span><span class="tc-label">Fart</span></div>
+                            <div class="tc-item"><span class="tc-val">${Math.round(track.course)}° ${courseToCardinal(track.course)}</span><span class="tc-label">Kurs</span></div>
+                            <div class="tc-item"><span class="tc-val">${sidste.height !== null ? Math.round(sidste.height) + ' m' : '-'}</span><span class="tc-label">Højde</span></div>
+                            <div class="tc-item"><span class="tc-val">${track.climb !== null ? (track.climb >= 0 ? '+' : '') + (track.climb * 60).toFixed(0) + ' m/min' : '-'}</span><span class="tc-label">Stigning</span></div>
+                        </div>
+                        <div class="tc-meta">${track.nFixes} fixes over ${Math.round(track.span)} s — fit-RMS ${Math.round(track.rmsFit)} m — ${medSess.toFixed(1)} sessioner/fix</div>
+                        ${advarsel}
+                    </div>`);
+            });
         }
 
         function updateStats(obsCount, targetCount, userCount) {
