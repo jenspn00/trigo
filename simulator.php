@@ -75,14 +75,14 @@ if (!$hasSession) {
 if ($hasSession) {
     $sql = "INSERT INTO observations
                 (id, session_id, observed_at, latitude, longitude, altitude, azimuth, elevation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-    $bindFmt = "sssddddd";
+            VALUES (?, ?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?)";
+    $bindFmt = "ssiddddd";
 } else {
     // Fallback: kor uden session_id (men dashboardet vil ikke kunne triangulere)
     $sql = "INSERT INTO observations
                 (id, observed_at, latitude, longitude, altitude, azimuth, elevation)
-            VALUES (?, ?, ?, ?, ?, ?, ?)";
-    $bindFmt = "ssddddd";
+            VALUES (?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?)";
+    $bindFmt = "siddddd";
 }
 
 $stmt = $mysqli->prepare($sql);
@@ -102,8 +102,11 @@ for ($i = 0; $i <= $num_steps; $i++) {
     $heli_lon = lerp($helicopter_path['start']['lon'], $helicopter_path['end']['lon'], $t);
     $heli_alt = lerp($helicopter_path['start']['alt'], $helicopter_path['end']['alt'], $t);
 
+    // Epoch — MySQL konverterer via FROM_UNIXTIME(), samme vej som
+    // save_data.php. Ellers ville simulatorens rækker lande i PHP's
+    // tidszone og falde uden for NOW()-vinduet, hvis MySQL kører en anden.
     $step_unix   = $start_unix + ($i * $dt_seconds);
-    $observed_at = date('Y-m-d H:i:s', $step_unix);
+    $observed_at = $step_unix;
 
     foreach ($observers as $obs_idx => $obs) {
         $bearing = calculateBearing($obs['lat'], $obs['lon'], $heli_lat, $heli_lon);
@@ -168,14 +171,12 @@ $out[] = "PHP gmdate():       " . gmdate('Y-m-d H:i:s');
 $out[] = "PHP date_default_timezone: " . date_default_timezone_get();
 $out[] = "";
 
-// Samme PHP-beregnede tidsgrænse som fetch_log.php
-$cutoff = $mysqli->real_escape_string(date('Y-m-d H:i:s', time() - 5 * 60));
 $row = $mysqli->query(
     "SELECT COUNT(*) AS c,
             MIN(observed_at) AS first_obs,
             MAX(observed_at) AS last_obs
        FROM observations
-      WHERE observed_at >= '$cutoff'"
+      WHERE observed_at >= (NOW() - INTERVAL 5 MINUTE)"
 )->fetch_assoc();
 $out[] = "--- Det fetch_log.php henter (seneste 5 min) ---";
 $out[] = "Rakker:  " . $row['c'];
@@ -187,7 +188,7 @@ if ($hasSession && (int)$row['c'] > 0) {
     $sample = $mysqli->query(
         "SELECT id, session_id, observed_at, latitude, longitude, azimuth, elevation
            FROM observations
-          WHERE observed_at >= '$cutoff'
+          WHERE observed_at >= (NOW() - INTERVAL 5 MINUTE)
           ORDER BY observed_at DESC LIMIT 9"
     );
     $out[] = "--- Sample (DESC) ---";

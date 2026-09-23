@@ -113,9 +113,10 @@ when you ship a version that changes deployed files or DB schema).
   (e.g. `address`, `session_id`) to stay compatible with databases that haven't been migrated yet.
   Follow that defensive pattern for any new optional column.
 - `client session_id` is the trust boundary for "is this the same observer" — there's no auth.
-- Time windows must be computed in PHP (`date()`), not MySQL `NOW()`: `observed_at` is written
-  with PHP's timezone, which may differ from MySQL's. `fetch_log.php` also returns
-  `observed_ms` (epoch) so browsers never parse the `DATETIME` string themselves (Safari can't).
+- Timezones: MySQL owns `observed_at` conversion both ways — writes go through
+  `FROM_UNIXTIME(<epoch>)` and reads filter with MySQL `NOW()`. Never write it with PHP `date()`
+  (PHP and MySQL timezones may differ). `fetch_log.php` also returns `observed_at_ms` (epoch from
+  `UNIX_TIMESTAMP`) so browsers never parse the `DATETIME` string themselves (Safari can't).
 - Anything from the DB rendered via `innerHTML` in `dashboard.html` must go through `esc()`.
 - `simulator.php` is gated by an optional `SIMULATOR_KEY` constant in `db_config.php`
   (`simulator.php?key=...`).

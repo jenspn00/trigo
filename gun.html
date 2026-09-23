@@ -136,6 +136,30 @@
     <div id="log"></div>
 
     <script>
+        // --- SESSION ID -------------------------------------------------
+        // Deles med index.html via samme localStorage-nøgle, så telefon og
+        // gun-enhed på samme browser tæller som én observatør.
+        //
+        // RETTELSE: gun.html sendte før INTET session_id. Rækkerne landede
+        // med session_id = NULL, og dashboardet falder da tilbage til
+        // 'row-<id>' pr. række — hver eneste pejling blev sin egen
+        // "observatør". Dermed var reglen om aldrig at krydse to pejlinger
+        // fra samme observatør sat ud af kraft, og én gun-enhed alene kunne
+        // producere falske krydsninger og falske LSQ-fixes ud af sine egne
+        // på hinanden følgende pejlinger.
+        function getOrCreateSessionId() {
+            let s = null;
+            try { s = localStorage.getItem('trigo_session_id'); } catch (e) {}
+            if (!s || !/^[a-zA-Z0-9\-_]{6,40}$/.test(s)) {
+                const buf = new Uint8Array(8);
+                (crypto || window.crypto).getRandomValues(buf);
+                s = 'u-' + Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+                try { localStorage.setItem('trigo_session_id', s); } catch (e) {}
+            }
+            return s;
+        }
+        const SESSION_ID = getOrCreateSessionId();
+
         // --- DOM ELEMENTER ---
         const startButton = document.getElementById('start-button');
         const initialScreen = document.getElementById('initial-screen');
@@ -170,21 +194,6 @@
         const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
         const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
         const textDecoder = new TextDecoder('utf-8');
-
-        // Session-id: samme nøgle som index.html, så dashboardet kan
-        // skelne observatører. Uden det blev hver gun-pejling sin egen
-        // "bruger", og to pejlinger fra samme gun blev krydset.
-        const SESSION_ID = (() => {
-            let s = null;
-            try { s = localStorage.getItem('trigo_session_id'); } catch (e) {}
-            if (!s || !/^[a-zA-Z0-9\-_]{6,40}$/.test(s)) {
-                const buf = new Uint8Array(8);
-                crypto.getRandomValues(buf);
-                s = 'g-' + Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
-                try { localStorage.setItem('trigo_session_id', s); } catch (e) {}
-            }
-            return s;
-        })();
 
         // --- Hjælpefunktioner ---
         function showLog(message, type = 'success', duration = 1500) {
