@@ -87,6 +87,12 @@
         .stat-val.accent  { color: var(--accent); }
         .stat-val.danger  { color: var(--danger); }
         .stat-val.success { color: var(--success); }
+        #truncation-note {
+            display: none; margin: 0 12px 10px; padding: 7px 10px;
+            border: 1px solid var(--warning, #d29922); border-radius: 6px;
+            background: rgba(210, 153, 34, 0.1); color: var(--warning, #d29922);
+            font-size: 0.72em; line-height: 1.45;
+        }
 
         #config-section {
             padding: 10px 18px; border-bottom: 1px solid var(--border);
@@ -217,6 +223,8 @@
                     <span class="stat-label">Brugere</span>
                 </div>
             </div>
+
+            <div id="truncation-note"></div>
 
             <div id="track-card">
                 <div class="tc-title">&#x1F6F8; Estimeret track</div>
@@ -681,7 +689,7 @@
 
                 const obs = data.latest_observations || [];
                 const timeWindow = parseInt(document.getElementById('time-window').value) || DEFAULT_TIME_WINDOW;
-                processData(obs, timeWindow);
+                processData(obs, timeWindow, data);
             } catch (e) {
                 console.error("Fejl ved hentning:", e);
             }
@@ -694,7 +702,7 @@
             }
         }, FETCH_INTERVAL);
 
-        function processData(observations, timeWindowSec) {
+        function processData(observations, timeWindowSec, meta = {}) {
             linesLayer.clearLayers();
             observerLayer.clearLayers();
             targetLayer.clearLayers();
@@ -708,7 +716,13 @@
                 const lat  = parseFloat(o.latitude);
                 const lon  = parseFloat(o.longitude);
                 const azi  = parseFloat(o.azimuth);
-                const time = new Date(o.observed_at).getTime();
+                // Foretræk epoch-tallet fra fetch_log.php. Fallback: gør
+                // DATETIME-strengen ISO-agtig ved at bytte mellemrum ud med
+                // "T" — uden det giver Safari Invalid Date, og så ryger
+                // både track-kortet og tidsvindue-filteret.
+                const time = (o.observed_at_ms != null && !isNaN(o.observed_at_ms))
+                    ? Number(o.observed_at_ms)
+                    : new Date(String(o.observed_at || '').replace(' ', 'T')).getTime();
                 // VIGTIGT: brug session_id som primær identifikator.
                 // Fald tilbage til row-id kun hvis session_id er NULL —
                 // det gør hver gammel række til "sin egen bruger" i
@@ -839,6 +853,7 @@
 
             // 5. Sidebar
             updateStats(observations.length, targets.length, uniqueUsers.size);
+            updateTruncationNote(meta, points);
             updateObservationsList(points);
             updateTargetsList(targets, addrQueue);
 
@@ -919,6 +934,27 @@
             document.getElementById('stat-obs').textContent     = obsCount;
             document.getElementById('stat-targets').textContent = targetCount;
             document.getElementById('stat-users').textContent   = userCount;
+        }
+
+        // fetch_log.php har et loft på antal rækker. Rammes det, mangler den
+        // ÆLDSTE del af tidsvinduet — og det er netop den del, track-fittet
+        // skal bruge for at kunne måle fart og kurs over tid. Før skete det
+        // helt lydløst; nu siges det.
+        function updateTruncationNote(data, points) {
+            const note = document.getElementById('truncation-note');
+            if (!data.truncated) { note.style.display = 'none'; return; }
+
+            let daekning = '';
+            const tider = points.map(p => p.time).filter(t => !isNaN(t));
+            if (tider.length > 1) {
+                const sek = Math.round((Math.max(...tider) - Math.min(...tider)) / 1000);
+                daekning = ` Du ser de nyeste ~${sek} sekunder.`;
+            }
+            note.textContent =
+                `Serveren nåede loftet på ${data.limit} observationer, så den ældste `
+                + `del af tidsvinduet er skarpt skåret fra.${daekning} `
+                + `Sæt tidsvinduet ned, eller hent færre minutter med ?minutes=.`;
+            note.style.display = 'block';
         }
 
         function updateObservationsList(points) {

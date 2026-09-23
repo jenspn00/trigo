@@ -64,14 +64,14 @@ if (!$hasSession) {
 if ($hasSession) {
     $sql = "INSERT INTO observations
                 (id, session_id, observed_at, latitude, longitude, altitude, azimuth, elevation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-    $bindFmt = "sssddddd";
+            VALUES (?, ?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?)";
+    $bindFmt = "ssiddddd";
 } else {
     // Fallback: kor uden session_id (men dashboardet vil ikke kunne triangulere)
     $sql = "INSERT INTO observations
                 (id, observed_at, latitude, longitude, altitude, azimuth, elevation)
-            VALUES (?, ?, ?, ?, ?, ?, ?)";
-    $bindFmt = "ssddddd";
+            VALUES (?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?)";
+    $bindFmt = "siddddd";
 }
 
 $stmt = $mysqli->prepare($sql);
@@ -91,8 +91,11 @@ for ($i = 0; $i <= $num_steps; $i++) {
     $heli_lon = lerp($helicopter_path['start']['lon'], $helicopter_path['end']['lon'], $t);
     $heli_alt = lerp($helicopter_path['start']['alt'], $helicopter_path['end']['alt'], $t);
 
+    // Epoch — MySQL konverterer via FROM_UNIXTIME(), samme vej som
+    // save_data.php. Ellers ville simulatorens rækker lande i PHP's
+    // tidszone og falde uden for NOW()-vinduet, hvis MySQL kører en anden.
     $step_unix   = $start_unix + ($i * $dt_seconds);
-    $observed_at = date('Y-m-d H:i:s', $step_unix);
+    $observed_at = $step_unix;
 
     foreach ($observers as $obs_idx => $obs) {
         $bearing = calculateBearing($obs['lat'], $obs['lon'], $heli_lat, $heli_lon);

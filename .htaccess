@@ -36,3 +36,41 @@
   AddHandler application/x-httpd-ea-php81 .php .php8 .phtml
 </IfModule>
 # php -- END cPanel-generated handler, do not edit
+
+# =================================================================
+#  Trigo: bloker direkte HTTP-adgang til data- og konfigurationsfiler
+#
+#  observation_log.txt indeholder én linje pr. observation med
+#  IP-adresse + GPS-position + adresse. Filen er gitignored, men
+#  det holdt den kun ude af git — den lå frit tilgængelig på
+#  https://trigo.industridata.dk/observation_log.txt
+#
+#  db_config.php serveres normalt aldrig som tekst (PHP afvikler
+#  den), men hvis PHP-handleren en dag fejler, ville database-
+#  kodeordet ligge i klartekst. Derfor blokeres den også.
+# =================================================================
+<FilesMatch "\.(txt|log|sql|md)$">
+    Require all denied
+</FilesMatch>
+
+<Files "db_config.php">
+    Require all denied
+</Files>
+
+# Undtagelse: robots.txt skal kunne hentes (sitemap.xml peger på siden).
+<Files "robots.txt">
+    Require all granted
+</Files>
+
+# Apache 2.2-fallback (nogle cPanel-servere kører stadig den gamle
+# adgangskontrol; uden dette blokeres intet der).
+<IfModule !mod_authz_core.c>
+    <FilesMatch "\.(txt|log|sql|md)$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+    <Files "db_config.php">
+        Order allow,deny
+        Deny from all
+    </Files>
+</IfModule>

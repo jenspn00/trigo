@@ -1,3 +1,107 @@
+# Trigo — opdatering (v4.2): Sikkerhed, tidszoner og session-id
+
+Fire ting fra gennemgangen af projektet. To af dem var reelle fejl, der
+ramte data; én var et hul, der lå åbent på nettet.
+
+## 1. Log-filer lå offentligt tilgængelige (hastesag)
+
+`save_data.php` skriver én linje pr. observation til `observation_log.txt`
+med **IP-adresse + GPS-position + adresse**. Filen står i `.gitignore`, men
+det holdt den kun ude af git — den kunne hentes af hvem som helst på
+`https://trigo.industridata.dk/observation_log.txt`.
+
+`.htaccess` blokerer nu `.txt`, `.log`, `.sql` og `.md` samt `db_config.php`
+(sidstnævnte for det tilfælde, at PHP-handleren en dag fejler og filen
+serveres som ren tekst med database-kodeordet i). `robots.txt` er undtaget.
+
+**Tjek efter upload:** hent `https://trigo.industridata.dk/observation_log.txt`
+i browseren. Du skal få 403 Forbidden. Gør du ikke det, honorerer serveren
+ikke `.htaccess`, og filen skal i stedet flyttes uden for webroot.
+
+**Ikke gjort:** selve IP-logningen er urørt. IP sammen med GPS-position er
+personhenførbare data, så overvej om feltet overhovedet skal med i loggen —
+men det er en beslutning om projektets dataindsamling, ikke en fejl.
+
+## 2. `gun.html` sendte intet session_id
+
+Gun-enheden sendte `id`, `timestamp`, `position` og `azimuth` — men aldrig
+`session_id`. Rækkerne landede med `session_id = NULL`, og dashboardet falder
+da tilbage til `row-<id>` pr. række. Hver eneste pejling blev altså sin egen
+"observatør", og reglen om aldrig at krydse to pejlinger fra samme observatør
+var sat ud af kraft: én gun-enhed alene kunne producere falske krydsninger og
+falske LSQ-fixes ud af sine egne på hinanden følgende pejlinger.
+
+`gun.html` bruger nu samme `localStorage`-nøgle som `index.html`, så telefon
+og gun på samme browser tæller som én observatør.
+
+## 3. Tidsstempler: Safari viste intet track
+
+Dashboardet fik en nøgen DATETIME-streng ("2026-09-23 09:00:00") og kaldte
+`new Date()` på den. Chrome tolker den som browserens lokaltid; **Safari kan
+slet ikke parse formatet og giver Invalid Date**. På iPhone og iPad betød det,
+at `computeFixes()` sprang hver eneste pejling over, så track-kortet forsvandt
+helt — og samtidig faldt tidsvindue-filteret sammen, fordi `NaN > x` altid er
+false, så alle par blev krydset uanset tid.
+
+`fetch_log.php` leverer nu også `observed_at_ms` (epoch i millisekunder,
+udregnet af MySQL). `observed_at` er bevaret uændret.
+
+Samtidig er skrivesiden lagt om: `save_data.php` og `simulator.php` indsætter
+via `FROM_UNIXTIME()` i stedet for PHP's `date()`. Før skrev PHP i sin
+tidszone, mens læsesiden filtrerer med MySQL's `NOW()` i MySQL's tidszone —
+og intet sted i projektet sætter nogen af dem. Var de forskellige, landede
+rækkerne forskudt og faldt ud af 5-minutters-vinduet. Nu konverterer MySQL
+både ind og ud, så de to følges ad uanset serverens opsætning.
+(Tidszone-dumpet i `simulator.php` er stadig nyttigt — men bør nu vise det
+samme hele vejen.)
+
+## 4. Afkortning ved 500 rækker er ikke længere tavs
+
+`fetch_log.php` henter højst 500 rækker. I track-mode sender én observatør en
+pejling hvert 0,8 sek = 75 rækker/min, så **tre observatører fylder ~1125
+rækker på standardvinduets 5 minutter**. Loftet rammes altså ved helt
+almindelig brug — netop det scenarie simulatoren tester — og dashboardet
+viste så kun de nyeste ~2 minutter uden at sige det. Det går ud over
+track-fittet, som skal bruge historik for at måle fart og kurs.
+
+Loftet står indtil videre, men `fetch_log.php` melder nu `truncated` tilbage,
+og dashboardet viser en gul note i sidebaren med, hvor meget du faktisk ser.
+
+**Ikke løst:** selve loftet. At hæve det alene gør ondt værre, fordi
+dashboardets rå krydsningsløkke er O(n²) — 500 punkter er allerede 125.000
+par pr. opdatering. Den rigtige løsning er at hæve loftet **og** samtidig
+begrænse det røde "rå krydsninger"-lag, som alligevel kun er med til
+sammenligning. Det er et bevidst valg om, hvad der skal være synligt, og
+venter på en beslutning.
+
+## Nyt: `schema.sql`
+
+Der fandtes ingen `CREATE TABLE` i repoet — kun `schema_migration.sql`, som
+`ALTER`er. Tabellen `observations` eksisterede altså kun på den kørende
+server, og en frisk installation kunne ikke bygges op fra kildekoden.
+
+`schema.sql` er **rekonstrueret ud fra de queries, koden kører** — ikke
+dumpet fra databasen. Kør den ikke på den eksisterende database. Kør i stedet
+`SHOW CREATE TABLE observations;` i phpMyAdmin og ret filen til, hvis der er
+afvigelser. Derefter er den sandheden for nye installationer.
+
+Bemærk også: `delete_object.php` sletter fra en tabel `tracked_objects`, som
+intet andet i projektet opretter, skriver til eller læser fra. Findes den ikke
+i databasen, er `delete_object.php` dødt kode.
+
+## Filer der skal uploades (overskriv)
+
+- `.htaccess` — blokerer log- og konfigurationsfiler
+- `dashboard.html` — epoch-tidsstempler + afkortningsnote
+- `fetch_log.php` — `observed_at_ms` + `truncated`
+- `save_data.php` — `FROM_UNIXTIME()`
+- `simulator.php` — `FROM_UNIXTIME()`
+- `gun.html` — session_id
+
+Ingen database-ændringer. `schema.sql` er kun til nye installationer.
+
+---
+
 # Trigo — opdatering (v4.1): Nyt baggrundskort
 
 CARTO har lukket for anonym brug af `basemaps.cartocdn.com`. Fliserne kom

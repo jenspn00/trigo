@@ -97,11 +97,20 @@ function normalizeRecord(array $data, ?string $fallbackSession, int $seq): array
     if ($elevation < -90 || $elevation > 90) throw new Exception("Ugyldig elevation: $elevation");
 
     $id = (string) pickField($data, ['id'], (string)(round(microtime(true) * 10000) + $seq));
+
+    // Tidspunktet bæres som epoch (sekunder) og konverteres af MySQL via
+    // FROM_UNIXTIME() ved insert.
+    //
+    // Før blev klientens ISO-8601-UTC lavet om til en DATETIME-streng med
+    // PHP's date(), altså i PHP's tidszone — mens læsesiden filtrerer med
+    // MySQL's NOW(), altså i MySQL's tidszone. Er de to ikke ens (og intet
+    // sted i projektet sætter dem), lander rækkerne forskudt og falder ud
+    // af dashboardets 5-minutters vindue. Med epoch + FROM_UNIXTIME er det
+    // MySQL der konverterer både ind og ud, så de to altid følges ad.
+    $timestamp = time();
     if (isset($data['timestamp'])) {
         $ts = strtotime($data['timestamp']);
-        $timestamp = $ts ? date('Y-m-d H:i:s', $ts) : date('Y-m-d H:i:s');
-    } else {
-        $timestamp = date('Y-m-d H:i:s');
+        if ($ts) $timestamp = $ts;
     }
 
     $session_id = cleanSessionId($data['session_id'] ?? $fallbackSession);
@@ -149,12 +158,12 @@ try {
     // Insert (én prepared statement, genbrugt)
     $sql = "INSERT INTO observations
               (id, session_id, observed_at, latitude, longitude, altitude, azimuth, elevation)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+              VALUES (?, ?, FROM_UNIXTIME(?), ?, ?, ?, ?, ?)";
     $stmt = $mysqli->prepare($sql);
     if (!$stmt) throw new Exception('SQL prepare-fejl: ' . $mysqli->error);
 
     foreach ($records as $rec) {
-        $stmt->bind_param("sssddddd",
+        $stmt->bind_param("ssiddddd",
             $rec['id'], $rec['session_id'], $rec['timestamp'],
             $rec['lat'], $rec['lon'], $rec['alt'],
             $rec['azimuth'], $rec['elevation']);
