@@ -291,10 +291,38 @@
         const DEFAULT_TIME_WINDOW = 120;
 
         const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([55.47, 8.45], 13);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap &copy; CARTO',
-            maxZoom: 20
-        }).addTo(map);
+        // Baggrundskort: Esri "Dark Gray Canvas".
+        // CARTO's basemaps.cartocdn.com kræver nu API-nøgle (fliserne kom
+        // tilbage med "API KEY REQUIRED" brændt ind i billedet), og en nøgle
+        // her ville ligge i klartekst i en fil, alle kan hente. Esri kræver
+        // ingen nøgle.
+        // BEMÆRK: Esri-URL'en har {y} FØR {x} — modsat CARTO og OSM.
+        // maxNativeZoom: Esri har kun fliser til zoom 16, men dashboardet
+        // zoomer til 17 når man klikker en krydsning i listen. Leaflet
+        // skalerer da z16-flisen op i stedet for at vise et tomt kort.
+        const baseLayer = L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+            {
+                attribution: 'Fliser &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+                maxNativeZoom: 16,
+                maxZoom: 20
+            }
+        ).addTo(map);
+
+        // Failsafe: falder Esri også bort, skiftes der automatisk til
+        // standard-OSM (lyst kort, men bedre end intet kort). Først efter
+        // flere fejlende fliser, så en enkelt tabt flise ikke skifter kort.
+        let tileErrors = 0, baseSwapped = false;
+        baseLayer.on('tileerror', () => {
+            if (baseSwapped || ++tileErrors < 4) return;
+            baseSwapped = true;
+            map.removeLayer(baseLayer);
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap-bidragydere',
+                maxZoom: 19
+            }).addTo(map);
+            console.warn('Esri-fliser utilgængelige — skiftet til OpenStreetMap.');
+        });
 
         const linesLayer    = L.layerGroup().addTo(map);
         const observerLayer = L.layerGroup().addTo(map);

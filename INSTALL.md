@@ -1,3 +1,43 @@
+# Trigo — opdatering (v4.1): Nyt baggrundskort
+
+CARTO har lukket for anonym brug af `basemaps.cartocdn.com`. Fliserne kom
+tilbage med “API KEY REQUIRED” brændt ind i selve billedet, så dashboardets
+kort stod som et gråt gitter med tekst hen over. Intet andet var ramt —
+Leaflet, fusionen, `fetch_log.php` og Nominatim-adresseopslaget bruger
+ingen nøgle.
+
+Vi skifter til **Esri “Dark Gray Canvas”**, som ikke kræver nøgle. Alternativet
+var en gratis CARTO-nøgle, men den ville ligge i klartekst i `dashboard.html`,
+som enhver kan hente fra webserveren.
+
+## Filer der skal uploades (overskriv)
+
+- `dashboard.html` — nyt baggrundskort
+
+Ingen database-ændringer. Ingen `sw.js`-bump nødvendig: service workeren kører
+network-first på HTML, så dashboardet henter den nye version ved næste
+indlæsning.
+
+## Detaljer værd at kende
+
+- **Esri-URL'en har `{y}` før `{x}`** — modsat CARTO og OSM. Byttes de om,
+  bliver kortet tomt uden fejlmeddelelse.
+- **`maxNativeZoom: 16`.** Esri har kun fliser til zoom 16, men dashboardet
+  zoomer til 17, når man klikker en krydsning i listen. Med `maxNativeZoom`
+  skalerer Leaflet z16-flisen op (en anelse udtværet) i stedet for at vise
+  et tomt kort.
+- **Failsafe:** falder Esri også bort, skifter dashboardet automatisk til
+  standard-OSM efter 4 fejlende fliser. Lyst kort mod mørk sidebar, men
+  bedre end intet kort — og der står en linje i browserkonsollen.
+
+## Test efter upload
+
+Åbn `dashboard.html` og bekræft at kortet tegner Esbjerg/Fanø mørkegråt uden
+tekst hen over. Klik en krydsning i sidebar-listen (zoom 17) og se at kortet
+stadig har fliser. Attributionen nederst til højre skal nu sige “Esri”.
+
+---
+
 # Trigo — opdatering (v4): Track-mode + rigtig track-estimering
 
 Denne version er "den anden chance": den ændrer projektets fysik fra
